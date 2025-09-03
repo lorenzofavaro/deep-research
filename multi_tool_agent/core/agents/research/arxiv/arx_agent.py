@@ -9,6 +9,9 @@ from multi_tool_agent.core.agents.research.arxiv.find import FindStep
 from multi_tool_agent.core.agents.research.arxiv.ingest import IngestStep
 from multi_tool_agent.core.agents.research.arxiv.rag import RAGStep
 from multi_tool_agent.data.document_service import DocumentIngestionService
+from multi_tool_agent.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ArxivAgent(BaseAgent):
@@ -56,14 +59,26 @@ class ArxivAgent(BaseAgent):
         Yields:
             Events from each step of the workflow
         """
+        logger.debug(
+            f'Starting ArXiv research workflow for agent {self._agent_id}',
+        )
+
+        logger.debug('Starting ArXiv paper search step')
         async for event in self._find_step.run_async(context):
             yield event
 
+        logger.debug('Starting paper filtering step')
         async for event in filter_agent.run_async(context):
             yield event
 
+        logger.debug('Starting paper ingestion step')
         async for event in self._ingest_step.run_async(context):
             yield event
 
+        logger.debug('Starting RAG step')
         async for event in self._rag_step.run_async(context):
             yield event
+
+        logger.info(
+            f'Completed ArXiv research workflow for agent {self._agent_id}',
+        )

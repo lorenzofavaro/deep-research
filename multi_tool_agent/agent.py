@@ -14,7 +14,10 @@ from multi_tool_agent.core.agents.main.plan import plan_agent
 from multi_tool_agent.core.agents.main.research import ResearchAgent
 from multi_tool_agent.core.services import ServiceContainer
 from multi_tool_agent.utils.config import config
+from multi_tool_agent.utils.logger import get_logger
 from multi_tool_agent.utils.utils import valid_uuid
+
+logger = get_logger(__name__)
 
 
 class RootAgent(BaseAgent):
@@ -46,12 +49,20 @@ class RootAgent(BaseAgent):
         Yields:
             Events from each stage of the research process
         """
+        logger.info('Starting research workflow')
+
         # Classify the user request
+        logger.debug('Classifying user request')
         async for event in self.classify_agent.run_async(context):
             yield event
 
         classification = context.session.state['classification']
+        logger.info(f'Classification result: {classification["type"]}')
+
         if classification['type'] != 'valid':
+            logger.info(
+                'Request classified as invalid, returning classification message',
+            )
             yield Event(
                 author=self.name,
                 content=types.Content(
@@ -62,6 +73,7 @@ class RootAgent(BaseAgent):
             return
 
         # Set up query state for planning
+        logger.debug('Setting up query state for planning')
         state_delta: dict[str, object] = {
             'query': context.session.state['classification']['user_intent'],
         }
@@ -73,11 +85,13 @@ class RootAgent(BaseAgent):
         await context.session_service.append_event(context.session, system_event)
 
         # Generate research plan
+        logger.info('Generating research plan')
         async for event in self.plan_agent.run_async(context):
             yield event
 
         # Execute research plan
         run_id = valid_uuid()
+        logger.info(f'Executing research plan with run_id: {run_id}')
         research_agent = ResearchAgent(
             name='ResearchAgent', description='Coordinates research steps', run_id=run_id, services=self.services,
         )
@@ -85,9 +99,12 @@ class RootAgent(BaseAgent):
             yield event
 
         # Generate final answer
+        logger.info('Generating final answer')
         answer_agent = AnswerAgent(name='AnswerAgent', run_id=run_id)
         async for event in answer_agent.run_async(context):
             yield event
+
+        logger.info('Research workflow completed successfully')
 
 
 root_agent = RootAgent(

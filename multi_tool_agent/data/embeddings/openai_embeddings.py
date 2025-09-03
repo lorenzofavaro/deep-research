@@ -1,6 +1,9 @@
 from typing import Optional
 
 from multi_tool_agent.data.embeddings.base import EmbeddingService
+from multi_tool_agent.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class OpenAIEmbedding(EmbeddingService):
@@ -17,6 +20,9 @@ class OpenAIEmbedding(EmbeddingService):
         self.model_name = model_name
         self.api_key = api_key
         self._client = None
+        logger.debug(
+            f'Initialized OpenAI embedding service with model: {model_name}',
+        )
 
     @property
     def client(self):
@@ -60,7 +66,9 @@ class OpenAIEmbedding(EmbeddingService):
             )
             return response.data[0].embedding
         except Exception as e:
-            print(f'Error generating embedding: {e}')
+            logger.error(
+                f'Error generating embedding for text: {e}', exc_info=True,
+            )
             raise
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -83,7 +91,9 @@ class OpenAIEmbedding(EmbeddingService):
             )
             return [data.embedding for data in response.data]
         except Exception as e:
-            print(f'Error generating embeddings: {e}')
+            logger.error(
+                f'Error generating embeddings for {len(texts)} texts: {e}', exc_info=True,
+            )
             raise
 
     @property

@@ -14,6 +14,9 @@ from multi_tool_agent.data.embeddings.base import EmbeddingService
 from multi_tool_agent.data.vector_stores.base import Document
 from multi_tool_agent.data.vector_stores.base import SearchResult
 from multi_tool_agent.data.vector_stores.base import VectorStore
+from multi_tool_agent.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class QdrantVectorStore(VectorStore):
@@ -37,6 +40,7 @@ class QdrantVectorStore(VectorStore):
         self.host = host
         self.port = port
         self._client = None
+        logger.debug(f'Initialized Qdrant vector store at {host}:{port}')
 
     @property
     def client(self) -> QdrantClient:
@@ -76,7 +80,9 @@ class QdrantVectorStore(VectorStore):
                 )
             return True
         except Exception as e:
-            print(f'Error ensuring collection: {e}')
+            logger.error(
+                f'Error ensuring collection {collection_name}: {e}', exc_info=True,
+            )
             return False
 
     async def add_documents(self, documents: list[Document], collection_name: str = '') -> bool:
@@ -118,9 +124,14 @@ class QdrantVectorStore(VectorStore):
                 collection_name=collection_name,
                 points=points,
             )
+            logger.debug(
+                f'Successfully added {len(documents)} documents to collection {collection_name}',
+            )
             return True
         except Exception as e:
-            print(f'Error adding documents to Qdrant: {e}')
+            logger.error(
+                f'Error adding documents to Qdrant collection {collection_name}: {e}', exc_info=True,
+            )
             return False
 
     async def search(
@@ -185,7 +196,9 @@ class QdrantVectorStore(VectorStore):
 
             return results
         except Exception as e:
-            print(f'Error searching in Qdrant: {e}')
+            logger.error(
+                f'Error searching in Qdrant collection {collection_name}: {e}', exc_info=True,
+            )
             return []
 
     async def search_by_text(
@@ -214,7 +227,9 @@ class QdrantVectorStore(VectorStore):
             # Use vector search with correct parameter order
             return await self.search(query_vector, collection_name, top_k, filters)
         except Exception as e:
-            print(f'Error in text search: {e}')
+            logger.error(
+                f'Error in text search for collection {collection_name}: {e}', exc_info=True,
+            )
             return []
 
     async def delete_document(self, document_id: str, collection_name: str) -> bool:
@@ -235,7 +250,12 @@ class QdrantVectorStore(VectorStore):
                     points=[document_id],
                 ),
             )
+            logger.debug(
+                f'Successfully deleted document {document_id} from collection {collection_name}',
+            )
             return True
         except Exception as e:
-            print(f'Error deleting document from Qdrant: {e}')
+            logger.error(
+                f'Error deleting document {document_id} from Qdrant collection {collection_name}: {e}', exc_info=True,
+            )
             return False

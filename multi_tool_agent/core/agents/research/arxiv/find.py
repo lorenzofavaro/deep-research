@@ -7,6 +7,9 @@ from google.adk.events import Event
 from google.genai import types
 
 from multi_tool_agent.core.tools.arxiv import search_arxiv
+from multi_tool_agent.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class FindStep(BaseAgent):
@@ -48,7 +51,11 @@ class FindStep(BaseAgent):
             Event containing the search results
         """
         query = context.session.state[f'query:{self.run_id}:{self.agent_id}']
+        logger.debug(f'Executing ArXiv search for query: "{query}"')
+
         papers_meta = search_arxiv(query)
+        logger.info(f'ArXiv search returned {len(papers_meta)} papers')
+
         yield Event(
             author=self.name,
             content=types.Content(

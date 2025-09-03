@@ -9,6 +9,10 @@ from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
 from mcp import StdioServerParameters
 
+from multi_tool_agent.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 system_prompt = """You are a Web Research Agent specialized in finding comprehensive and up-to-date information online.
 
@@ -96,5 +100,12 @@ class WebSearchAgent(BaseAgent):
         Yields:
             Events from the web search LLM agent
         """
+        query = context.session.state.get(
+            f'query:{self._run_id}:{self._agent_id}', 'unknown',
+        )
+        logger.debug(f'Starting web search for query: "{query}"')
+
         async for event in self._web_search_llm.run_async(context):
             yield event
+
+        logger.info(f'Completed web search for agent {self._agent_id}')

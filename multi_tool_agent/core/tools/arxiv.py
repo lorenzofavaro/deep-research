@@ -4,6 +4,10 @@ import feedparser
 import requests
 from PyPDF2 import PdfReader
 
+from multi_tool_agent.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def search_arxiv(query: str, max_results: int = 50, start: int = 0) -> list[dict[str, str]]:
     """
@@ -17,6 +21,9 @@ def search_arxiv(query: str, max_results: int = 50, start: int = 0) -> list[dict
     Returns:
         List of dictionaries containing paper information (id, title, abstract, url)
     """
+    logger.debug(
+        f'Searching ArXiv with query: "{query}", max_results: {max_results}, start: {start}',
+    )
     base_url = 'http://export.arxiv.org/api/query?'
     params = f'search_query={query}&start={start}&max_results={max_results}'
     url = base_url + params
@@ -40,6 +47,8 @@ def search_arxiv(query: str, max_results: int = 50, start: int = 0) -> list[dict
             'abstract': abstract,
             'url': pdf_link,
         })
+
+    logger.info(f'Found {len(papers)} papers from ArXiv search')
     return papers
 
 
@@ -56,17 +65,29 @@ def get_arxiv_paper(arxiv_id: str) -> tuple[str, str, dict[str, str]]:
         - Extracted text content from the PDF
         - Metadata dictionary with paper information
     """
+    logger.debug(f'Fetching ArXiv paper {arxiv_id}')
     pdf_url = f'http://arxiv.org/pdf/{arxiv_id}.pdf'
-    resp = requests.get(pdf_url)
-    resp.raise_for_status()
-    reader = PdfReader(BytesIO(resp.content))
-    text = '\n'.join(page.extract_text() or '' for page in reader.pages)
 
-    metadata = {
-        'arxiv_id': arxiv_id,
-        'source': 'arxiv',
-        'pdf_url': f'http://arxiv.org/pdf/{arxiv_id}.pdf',
-        'abs_url': f'http://arxiv.org/abs/{arxiv_id}',
-        'document_type': 'research_paper',
-    }
-    return arxiv_id, text, metadata
+    try:
+        resp = requests.get(pdf_url)
+        resp.raise_for_status()
+        reader = PdfReader(BytesIO(resp.content))
+        text = '\n'.join(page.extract_text() or '' for page in reader.pages)
+
+        metadata = {
+            'arxiv_id': arxiv_id,
+            'source': 'arxiv',
+            'pdf_url': f'http://arxiv.org/pdf/{arxiv_id}.pdf',
+            'abs_url': f'http://arxiv.org/abs/{arxiv_id}',
+            'document_type': 'research_paper',
+        }
+
+        logger.info(
+            f'Successfully extracted {len(text)} characters from ArXiv paper {arxiv_id}',
+        )
+        return arxiv_id, text, metadata
+    except Exception as e:
+        logger.error(
+            f'Error fetching ArXiv paper {arxiv_id}: {e}', exc_info=True,
+        )
+        raise

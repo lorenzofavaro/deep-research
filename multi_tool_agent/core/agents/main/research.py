@@ -12,7 +12,10 @@ from multi_tool_agent.core.agents.main.aggregate import AggregateStep
 from multi_tool_agent.core.agents.research.arxiv.arx_agent import ArxivAgent
 from multi_tool_agent.core.agents.research.web.search_agent import WebSearchAgent
 from multi_tool_agent.core.services import ServiceContainer
+from multi_tool_agent.utils.logger import get_logger
 from multi_tool_agent.utils.utils import valid_uuid
+
+logger = get_logger(__name__)
 
 
 class ResearchAgent(BaseAgent):
@@ -48,7 +51,7 @@ class ResearchAgent(BaseAgent):
 
         for step in plan.get('steps', []):
             agent_id = valid_uuid()
-            print(f'step: {step}')
+            logger.debug(f'Processing research step: {step}')
 
             task_delta[f'query:{self.run_id}:{agent_id}'] = step.get(
                 'query', '',

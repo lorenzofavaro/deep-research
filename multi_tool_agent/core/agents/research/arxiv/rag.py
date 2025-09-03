@@ -10,6 +10,9 @@ from google.genai import types
 from pydantic import ConfigDict
 
 from multi_tool_agent.data.document_service import DocumentIngestionService
+from multi_tool_agent.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class RAGStep(BaseAgent):
@@ -43,8 +46,15 @@ class RAGStep(BaseAgent):
         """
         query = context.session.state[f'query:{self.run_id}:{self.agent_id}']
         collection_name = context.session.state[f'collection_name:{self.run_id}']
+
+        logger.debug(
+            f'Executing RAG search for query: "{query}" in collection: {collection_name}',
+        )
+
         docs = await self.document_service.search_documents(query, collection_name=collection_name)
         docs_text = json.dumps(docs, ensure_ascii=False, indent=2)
+
+        logger.info(f'RAG search returned {len(docs)} documents')
 
         step_delta: dict[str, object] = {
             f'results:{self.run_id}:{self.agent_id}': docs_text,
@@ -53,7 +63,11 @@ class RAGStep(BaseAgent):
             author=self.name,
             content=types.Content(
                 role='assistant',
-                parts=[types.Part(text=f'RAGed something')],
+                parts=[
+                    types.Part(
+                        text=f'Retrieved {len(docs)} relevant documents from knowledge base',
+                    ),
+                ],
             ),
             actions=EventActions(state_delta=step_delta),
         )

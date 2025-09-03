@@ -11,6 +11,9 @@ from pydantic import Field
 
 from multi_tool_agent.core.tools.arxiv import get_arxiv_paper
 from multi_tool_agent.data.document_service import DocumentIngestionService
+from multi_tool_agent.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class PaperIDs(BaseModel):
@@ -54,11 +57,13 @@ class IngestStep(BaseAgent):
         paper_ids = PaperIDs(**content)
 
         for paper_id in paper_ids.ids:
-            print(f'Reading paper {paper_id}...')
+            logger.info(f'Starting ingestion of paper {paper_id}')
             document_id, text, metadata = get_arxiv_paper(paper_id)
             await self.document_service.ingest_document(document_id, text, metadata, collection_name, max_length=3000)
+            logger.info(f'Completed ingestion of paper {paper_id}')
 
         result_message = f'Successfully ingested {len(paper_ids.ids)} papers'
+        logger.info(result_message)
         yield Event(
             author=self.name,
             content=types.Content(
