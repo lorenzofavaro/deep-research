@@ -2,7 +2,7 @@
 
 ## Overview
 
-A **multi-agent AI research assistant** built with [Google ADK](https://github.com/google/adk-python) that automatically searches [ArXiv](https://arxiv.org/) papers and the web to answer your questions. It creates **research plans**, gathers information from multiple sources (web search and ArXiv papers), and provides **cited responses**.
+A **multi-agent AI research assistant** built with [Google ADK](https://github.com/google/adk-python) that automatically researches and answers your questions with comprehensive, well-cited responses.
 
 ## Workflow
 
