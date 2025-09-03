@@ -84,3 +84,15 @@ The system processes user queries through four main phases:
    ```bash
    uv run adk run multi_tool_agent
    ```
+
+## Usage Examples
+
+### Basic Research Query
+- *Who is the current president of the USA?*
+- *Tell me the latest news on Elon Musk*
+- *"What are the latest developments in transformer architecture optimization?"*
+
+### Domain-Specific Research
+- *"How do quantum computing algorithms compare to classical machine learning for optimization problems?"*
+- *"What are the current applications of CRISPR technology in treating genetic disorders?"*
+- *"What are the latest developments in renewable energy storage solutions?"*
