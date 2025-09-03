@@ -25,7 +25,7 @@ class ClassificationResult(BaseModel):
     )
 
 
-GEMINI_MODEL = 'gemini-1.5-flash'
+GEMINI_MODEL = 'gemini-2.0-flash'
 
 system_prompt = """You are a Request Classification Agent that categorizes user requests into three types:
 

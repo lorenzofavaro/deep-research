@@ -27,7 +27,7 @@ class PaperIDs(BaseModel):
     )
 
 
-GEMINI_MODEL = 'gemini-1.5-flash'
+GEMINI_MODEL = 'gemini-2.0-flash'
 PAPERS_NUM = 2
 
 system_prompt = f"""You are a Research Search Agent.

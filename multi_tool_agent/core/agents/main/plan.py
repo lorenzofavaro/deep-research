@@ -38,7 +38,7 @@ class ResearchPlan(BaseModel):
     )
 
 
-GEMINI_MODEL = 'gemini-1.5-flash'
+GEMINI_MODEL = 'gemini-2.0-flash'
 
 system_prompt = """You are a Research Planning Agent that creates step-by-step research plans from the user_intent.
 
