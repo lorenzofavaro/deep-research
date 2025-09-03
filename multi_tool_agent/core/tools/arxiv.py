@@ -5,7 +5,18 @@ import requests
 from PyPDF2 import PdfReader
 
 
-def search_arxiv(query, max_results=50, start=0):
+def search_arxiv(query: str, max_results: int = 50, start: int = 0) -> list[dict[str, str]]:
+    """
+    Search for papers on arXiv using the arXiv API.
+
+    Args:
+        query: Search query string
+        max_results: Maximum number of results to return
+        start: Starting index for pagination
+
+    Returns:
+        List of dictionaries containing paper information (id, title, abstract, url)
+    """
     base_url = 'http://export.arxiv.org/api/query?'
     params = f'search_query={query}&start={start}&max_results={max_results}'
     url = base_url + params
@@ -33,7 +44,18 @@ def search_arxiv(query, max_results=50, start=0):
 
 
 def get_arxiv_paper(arxiv_id: str) -> tuple[str, str, dict[str, str]]:
-    """Fetch the full content of an arXiv paper (PDF text) given its ID."""
+    """
+    Fetch the full content of an arXiv paper (PDF text) given its ID.
+
+    Args:
+        arxiv_id: The arXiv paper ID (e.g., "2301.07041")
+
+    Returns:
+        Tuple containing:
+        - Paper ID
+        - Extracted text content from the PDF
+        - Metadata dictionary with paper information
+    """
     pdf_url = f'http://arxiv.org/pdf/{arxiv_id}.pdf'
     resp = requests.get(pdf_url)
     resp.raise_for_status()

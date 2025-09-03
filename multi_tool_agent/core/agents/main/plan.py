@@ -1,4 +1,5 @@
 from typing import Literal
+from typing import Optional
 
 from google.adk.agents import LlmAgent
 from google.adk.planners.plan_re_act_planner import PlanReActPlanner
@@ -7,19 +8,21 @@ from pydantic import Field
 
 
 class ClassificationResult(BaseModel):
+    """Result from user request classification."""
     type: Literal[
         'valid', 'general',
         'need-more-info',
     ] = Field(description='Classification result')
-    user_intent: str | None = Field(
+    user_intent: Optional[str] = Field(
         description="Precise user intent for 'valid' classifications", default=None,
     )
-    next_message: str | None = Field(
+    next_message: Optional[str] = Field(
         description="Next message to send to user for 'general' or 'need-more-info' classifications", default=None,
     )
 
 
 class ResearchStep(BaseModel):
+    """Individual step in a research plan."""
     action: Literal['arxiv_search', 'web_search'] = Field(
         description='Type of action to perform',
     )
@@ -29,6 +32,7 @@ class ResearchStep(BaseModel):
 
 
 class ResearchPlan(BaseModel):
+    """Complete research plan with sequential steps."""
     steps: list[ResearchStep] = Field(
         description='List of research steps to execute',
     )

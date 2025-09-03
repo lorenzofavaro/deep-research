@@ -1,3 +1,6 @@
+from collections.abc import AsyncGenerator
+from typing import Any
+
 from google.adk.agents import BaseAgent
 from google.adk.agents import LlmAgent
 from google.adk.agents.invocation_context import InvocationContext
@@ -15,18 +18,35 @@ from multi_tool_agent.utils.utils import valid_uuid
 
 
 class RootAgent(BaseAgent):
+    """Root agent that coordinates the entire research workflow."""
+
     classify_agent: LlmAgent
     plan_agent: LlmAgent
     services: ServiceContainer
     model_config = {'arbitrary_types_allowed': True}
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
+        """
+        Initialize the RootAgent.
+
+        Args:
+            **kwargs: Keyword arguments including agents and services
+        """
         if 'services' not in kwargs:
             kwargs['services'] = ServiceContainer(config)
         super().__init__(**kwargs)
 
-    async def _run_async_impl(self, context: InvocationContext):
-        # query = context.session.events[-1].content.parts[0].text
+    async def _run_async_impl(self, context: InvocationContext) -> AsyncGenerator[Event, None]:
+        """
+        Execute the complete research workflow.
+
+        Args:
+            context: Invocation context containing user query and session state
+
+        Yields:
+            Events from each stage of the research process
+        """
+        # Classify the user request
         async for event in self.classify_agent.run_async(context):
             yield event
 
@@ -41,7 +61,8 @@ class RootAgent(BaseAgent):
             )
             return
 
-        state_delta = {
+        # Set up query state for planning
+        state_delta: dict[str, object] = {
             'query': context.session.state['classification']['user_intent'],
         }
         system_event = Event(
@@ -51,9 +72,11 @@ class RootAgent(BaseAgent):
         )
         await context.session_service.append_event(context.session, system_event)
 
+        # Generate research plan
         async for event in self.plan_agent.run_async(context):
             yield event
 
+        # Execute research plan
         run_id = valid_uuid()
         research_agent = ResearchAgent(
             name='ResearchAgent', description='Coordinates research steps', run_id=run_id, services=self.services,
@@ -61,6 +84,7 @@ class RootAgent(BaseAgent):
         async for event in research_agent.run_async(context):
             yield event
 
+        # Generate final answer
         answer_agent = AnswerAgent(name='AnswerAgent', run_id=run_id)
         async for event in answer_agent.run_async(context):
             yield event

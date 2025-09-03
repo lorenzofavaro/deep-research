@@ -1,17 +1,34 @@
+from typing import Optional
+
 from multi_tool_agent.data.embeddings.base import EmbeddingService
 
 
 class OpenAIEmbedding(EmbeddingService):
-    """OpenAI embedding service."""
+    """OpenAI embedding service for generating text embeddings."""
 
-    def __init__(self, model_name: str = 'text-embedding-3-small', api_key: str | None = None):
+    def __init__(self, model_name: str = 'text-embedding-3-small', api_key: Optional[str] = None) -> None:
+        """
+        Initialize OpenAI embedding service.
+
+        Args:
+            model_name: Name of the OpenAI embedding model to use
+            api_key: OpenAI API key (if None, will use environment variable)
+        """
         self.model_name = model_name
         self.api_key = api_key
         self._client = None
 
     @property
     def client(self):
-        """Lazy initialization of OpenAI client."""
+        """
+        Lazy initialization of OpenAI client.
+
+        Returns:
+            AsyncOpenAI client instance
+
+        Raises:
+            ImportError: If openai package is not installed
+        """
         if self._client is None:
             try:
                 from openai import AsyncOpenAI
@@ -24,7 +41,18 @@ class OpenAIEmbedding(EmbeddingService):
         return self._client
 
     async def embed_text(self, text: str) -> list[float]:
-        """Generate embedding for a single text using OpenAI."""
+        """
+        Generate embedding for a single text using OpenAI.
+
+        Args:
+            text: Input text to embed
+
+        Returns:
+            List of float values representing the text embedding
+
+        Raises:
+            Exception: If embedding generation fails
+        """
         try:
             response = await self.client.embeddings.create(
                 model=self.model_name,
@@ -36,7 +64,18 @@ class OpenAIEmbedding(EmbeddingService):
             raise
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for multiple texts."""
+        """
+        Generate embeddings for multiple texts.
+
+        Args:
+            texts: List of input texts to embed
+
+        Returns:
+            List of embedding vectors, one for each input text
+
+        Raises:
+            Exception: If embedding generation fails
+        """
         try:
             response = await self.client.embeddings.create(
                 model=self.model_name,
@@ -49,6 +88,11 @@ class OpenAIEmbedding(EmbeddingService):
 
     @property
     def vector_size(self) -> int:
-        """Get the size of the embedding vectors."""
+        """
+        Get the size of the embedding vectors.
+
+        Returns:
+            Dimension size of the embedding vectors (1536 for text-embedding-3-small)
+        """
         # text-embedding-3-small produces 1536-dimensional vectors
         return 1536

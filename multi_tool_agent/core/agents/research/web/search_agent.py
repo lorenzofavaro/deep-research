@@ -1,7 +1,10 @@
 import os
+from collections.abc import AsyncGenerator
 
 from google.adk.agents import BaseAgent
 from google.adk.agents import LlmAgent
+from google.adk.agents.invocation_context import InvocationContext
+from google.adk.events import Event
 from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
 from mcp import StdioServerParameters
@@ -41,7 +44,17 @@ Query:
 
 
 class WebSearchAgent(BaseAgent):
-    def __init__(self, *, name: str, run_id: str, agent_id: str):
+    """Agent for performing web-based research using external search tools."""
+
+    def __init__(self, *, name: str, run_id: str, agent_id: str) -> None:
+        """
+        Initialize the WebSearchAgent.
+
+        Args:
+            name: Name of the agent
+            run_id: Unique identifier for the current run
+            agent_id: Unique identifier for this agent instance
+        """
         super().__init__(name=name)
         self._run_id = run_id
         self._agent_id = agent_id
@@ -72,6 +85,15 @@ class WebSearchAgent(BaseAgent):
             output_key=f'results:{self._run_id}:{self._agent_id}',
         )
 
-    async def _run_async_impl(self, context):
+    async def _run_async_impl(self, context: InvocationContext) -> AsyncGenerator[Event, None]:
+        """
+        Execute the web search workflow.
+
+        Args:
+            context: Invocation context containing session state and configuration
+
+        Yields:
+            Events from the web search LLM agent
+        """
         async for event in self._web_search_llm.run_async(context):
             yield event

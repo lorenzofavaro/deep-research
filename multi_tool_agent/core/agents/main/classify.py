@@ -1,4 +1,5 @@
 from typing import Literal
+from typing import Optional
 
 from google.adk.agents import LlmAgent
 from pydantic import BaseModel
@@ -6,18 +7,20 @@ from pydantic import Field
 
 
 class UserRequest(BaseModel):
+    """Model representing a user's research request."""
     query: str = Field(description="User's research request or query")
 
 
 class ClassificationResult(BaseModel):
+    """Result from classifying a user request."""
     type: Literal[
         'valid', 'general',
         'need-more-info',
     ] = Field(description='Classification result')
-    user_intent: str | None = Field(
+    user_intent: Optional[str] = Field(
         description="Precise user intent for 'valid' classifications", default=None,
     )
-    next_message: str | None = Field(
+    next_message: Optional[str] = Field(
         description="Next message to send to user for 'general' or 'need-more-info' classifications", default=None,
     )
 

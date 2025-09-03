@@ -1,3 +1,6 @@
+from collections.abc import AsyncGenerator
+from typing import Any
+
 from google.adk.agents import BaseAgent
 from google.adk.agents import ParallelAgent
 from google.adk.agents.invocation_context import InvocationContext
@@ -13,18 +16,36 @@ from multi_tool_agent.utils.utils import valid_uuid
 
 
 class ResearchAgent(BaseAgent):
+    """Agent for coordinating parallel research execution across multiple sources."""
+
     name: str = ''
     description: str = ''
     run_id: str = ''
     services: ServiceContainer
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
+        """
+        Initialize the ResearchAgent.
+
+        Args:
+            **kwargs: Keyword arguments including services and configuration
+        """
         super().__init__(**kwargs)
 
-    async def _run_async_impl(self, context: InvocationContext):
+    async def _run_async_impl(self, context: InvocationContext) -> AsyncGenerator[Event, None]:
+        """
+        Execute the research plan with parallel agents.
+
+        Args:
+            context: Invocation context containing the research plan and session state
+
+        Yields:
+            Events from the research execution process
+        """
         plan = context.session.state.get('research_plan', {})
-        task_delta = {}
-        sub_agents = []
+        task_delta: dict[str, object] = {}
+        sub_agents: list[BaseAgent] = []
+
         for step in plan.get('steps', []):
             agent_id = valid_uuid()
             print(f'step: {step}')

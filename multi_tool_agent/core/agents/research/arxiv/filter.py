@@ -4,6 +4,7 @@ from pydantic import Field
 
 
 class PaperMeta(BaseModel):
+    """Metadata for an individual ArXiv paper."""
     id: str = Field(default_factory=str, description='Arxiv paper ID')
     title: str = Field(default_factory=str, description='Arxiv paper title')
     abstract: str = Field(
@@ -14,10 +15,12 @@ class PaperMeta(BaseModel):
 
 
 class PapersMetas(BaseModel):
+    """Collection of paper metadata for filtering."""
     infos: list[PaperMeta]
 
 
 class PaperIDs(BaseModel):
+    """Collection of selected paper IDs after filtering."""
     ids: list[str] = Field(
         default_factory=list,
         description='List of Arxiv paper ids',

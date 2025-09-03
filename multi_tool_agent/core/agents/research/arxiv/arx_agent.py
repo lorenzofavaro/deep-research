@@ -1,4 +1,8 @@
+from collections.abc import AsyncGenerator
+
 from google.adk.agents import BaseAgent
+from google.adk.agents.invocation_context import InvocationContext
+from google.adk.events import Event
 
 from multi_tool_agent.core.agents.research.arxiv.filter import filter_agent
 from multi_tool_agent.core.agents.research.arxiv.find import FindStep
@@ -8,10 +12,25 @@ from multi_tool_agent.data.document_service import DocumentIngestionService
 
 
 class ArxivAgent(BaseAgent):
+    """Agent for coordinating ArXiv paper research workflow."""
+
     def __init__(
-        self, *, name: str, run_id: str, agent_id: str,
+        self,
+        *,
+        name: str,
+        run_id: str,
+        agent_id: str,
         document_service: DocumentIngestionService,
-    ):
+    ) -> None:
+        """
+        Initialize the ArXiv agent.
+
+        Args:
+            name: Name of the agent
+            run_id: Unique identifier for the current run
+            agent_id: Unique identifier for this agent instance
+            document_service: Service for document ingestion and retrieval
+        """
         super().__init__(name=name)
         self._run_id = run_id
         self._agent_id = agent_id
@@ -27,7 +46,16 @@ class ArxivAgent(BaseAgent):
             run_id=run_id, agent_id=agent_id, document_service=document_service,
         )
 
-    async def _run_async_impl(self, context):
+    async def _run_async_impl(self, context: InvocationContext) -> AsyncGenerator[Event, None]:
+        """
+        Execute the complete ArXiv research workflow.
+
+        Args:
+            context: Invocation context containing session state and configuration
+
+        Yields:
+            Events from each step of the workflow
+        """
         async for event in self._find_step.run_async(context):
             yield event
 
