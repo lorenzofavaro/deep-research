@@ -10,7 +10,9 @@ The system processes user queries through four main phases:
 
 1. **Classification** - Determines if the request is a valid research question, needs more information, or is a general query
 2. **Planning** - Creates a targeted research plan with up to 3 steps, combining ArXiv searches for academic foundations and web searches for current developments
-3. **Research Execution** - Runs the plan in parallel, with specialized agents handling ArXiv paper retrieval/analysis and web search via [Tavily MCP server](https://docs.tavily.com/documentation/mcp)
+3. **Research Execution** - Runs the plan in parallel, with specialized agents handling:
+   - **ArXiv Research**: Scans top 50 papers, selects top 3 based on abstracts, ingests them into Qdrant with OpenAI embeddings, and performs RAG to extract relevant information while preserving URLs for citations
+   - **Web Search**: Uses [Tavily MCP server](https://docs.tavily.com/documentation/mcp) to gather current information and developments
 4. **Answer Synthesis** - Aggregates all findings and generates a comprehensive, well-cited response using the collected research data
 
 ## Architecture
