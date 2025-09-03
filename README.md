@@ -2,7 +2,7 @@
 
 ## Overview
 
-A multi-agent AI research assistant built with Google ADK that automatically searches ArXiv papers and the web to answer your questions. It creates research plans, gathers information from multiple sources (web search and ArXiv papers), and provides cited responses.
+A **multi-agent AI research assistant** built with [Google ADK](https://github.com/google/adk-python) that automatically searches [ArXiv](https://arxiv.org/) papers and the web to answer your questions. It creates **research plans**, gathers information from multiple sources (web search and ArXiv papers), and provides **cited responses**.
 
 ## Workflow
 
@@ -10,7 +10,7 @@ The system processes user queries through four main phases:
 
 1. **Classification** - Determines if the request is a valid research question, needs more information, or is a general query
 2. **Planning** - Creates a targeted research plan with up to 3 steps, combining ArXiv searches for academic foundations and web searches for current developments
-3. **Research Execution** - Runs the plan in parallel, with specialized agents handling ArXiv paper retrieval/analysis and web search via Tavily MCP server
+3. **Research Execution** - Runs the plan in parallel, with specialized agents handling ArXiv paper retrieval/analysis and web search via [Tavily MCP server](https://docs.tavily.com/documentation/mcp)
 4. **Answer Synthesis** - Aggregates all findings and generates a comprehensive, well-cited response using the collected research data
 
 ## Architecture
