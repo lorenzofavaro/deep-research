@@ -1,0 +1,42 @@
+[project]
+name = "deep-research"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "feedparser>=6.0.11",
+    "google-adk>=1.13.0",
+    "pydantic>=2.11.7",
+    "pypdf2>=3.0.1",
+    "aiofiles>=24.1.0",
+    "google-generativeai>=0.8.5",
+    "qdrant-client>=1.15.1",
+    "openai>=1.102.0",
+    "tavily-python>=0.7.11",
+    "pre-commit>=4.3.0",
+]
+
+[project.optional-dependencies]
+qdrant = [
+    "qdrant-client>=1.7.0",
+]
+gcs = [
+    "google-cloud-storage>=2.10.0",
+]
+vertex-ai = [
+    "google-cloud-aiplatform>=1.38.0",
+]
+google-ai = [
+    "google-generativeai>=0.3.0",
+]
+openai = [
+    "openai>=1.0.0",
+]
+all = [
+    "qdrant-client>=1.7.0",
+    "google-cloud-storage>=2.10.0",
+    "google-cloud-aiplatform>=1.38.0",
+    "google-generativeai>=0.3.0",
+    "openai>=1.0.0",
+]
