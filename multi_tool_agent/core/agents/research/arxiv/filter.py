@@ -28,7 +28,7 @@ class PaperIDs(BaseModel):
 
 
 GEMINI_MODEL = 'gemini-2.0-flash'
-PAPERS_NUM = 2
+PAPERS_NUM = 3
 
 system_prompt = f"""You are a Research Search Agent.
 Your role is to identify the most relevant academic papers for a given user query.
