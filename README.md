@@ -17,10 +17,6 @@ The system processes user queries through four main phases:
    - **Web Search**: Uses [Tavily MCP server](https://docs.tavily.com/documentation/mcp) to gather current information and developments
 4. **Answer Synthesis** - Aggregates all findings and generates a comprehensive, well-cited response using the collected research data
 
-## Architecture
-
-*Architecture diagram will be added here*
-
 ## Getting Started
 
 ### Prerequisites
