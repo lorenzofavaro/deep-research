@@ -17,8 +17,13 @@ User Query:
 Instructions:
 - Use ALL research findings to answer the query completely
 - Support your response with specific evidence from the results
-- Structure your answer clearly and concisely
-- Address the query directly without unnecessary elaboration"""
+- For EVERY piece of information you include, cite the source with proper references
+- When referencing ArXiv papers, use the format: [Author et al., Year] (arXiv:ID)
+- When referencing web sources, use the format: [Title] (URL)
+- Include a "References" section at the end listing all sources used
+- Structure your answer clearly and concisely with proper citations throughout
+- Address the query directly without unnecessary elaboration
+- Ensure each claim or statement is backed by a specific source reference"""
 
 
 class AnswerAgent(BaseAgent):
