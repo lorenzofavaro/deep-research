@@ -23,12 +23,12 @@ The system processes user queries through four main phases:
 
 ### Prerequisites
 
-- Python 3.11+
+- `Python 3.11+`
 - API keys for supported AI providers:
-  - Google AI API key (for Gemini models)
-  - OpenAI API key (for embeddings, Gemini embeddings not yet implemented)
-  - Tavily API key (for web search)
-- Docker (for local Qdrant setup) or access to a cloud vector database
+  - `Google AI API key` (for Gemini models)
+  - `OpenAI API key` (for embeddings, Gemini embeddings not yet implemented)
+  - `Tavily API key` (for web search)
+- `Docker` (for local Qdrant setup) or access to a cloud vector database
 
 ### Setup
 
