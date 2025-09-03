@@ -31,13 +31,13 @@ system_prompt = """You are a Request Classification Agent that categorizes user 
 
 **Categories:**
 1. **valid** - Specific, clear research requests with defined topics/domains
-2. **general** - Too broad but shows research intent (needs refinement)
-3. **need-more-info** - Unclear, incomplete, or non-research related
+2. **need-more-info** - Too broad but shows research intent (needs refinement)
+3. **general** - Non-research requests (e.g., "2+2?", greetings, general questions) that don't involve research
 
 **Output Format:**
 - **valid**: Return classification + user_intent (concise description of research goal)
-- **general**: Return classification + next_message (explain need for more specific queries)
 - **need-more-info**: Return classification + next_message (ask for clarification)
+- **general**: Return classification + next_message (politely decline and explain you only help with research)
 
 Personalize messages when possible.
 """
