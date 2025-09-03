@@ -6,7 +6,7 @@ A **multi-agent AI research assistant**, powered by [Gemini 2.0 Flash](https://c
 
 ## Workflow
 
-![Workflow](docs/workflow.png)
+<img src="docs/workflow.png" alt="Workflow" width="500"/>
 
 The system processes user queries through four main phases:
 
