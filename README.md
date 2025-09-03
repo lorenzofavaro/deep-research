@@ -2,11 +2,11 @@
 
 ## Overview
 
-A **multi-agent AI research assistant** built with [Google ADK](https://github.com/google/adk-python) that automatically researches and answers your questions with comprehensive, well-cited responses.
+A **multi-agent AI research assistant**, powered by [Gemini 2.0 Flash](https://cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/2-0-flash), built with [Google ADK](https://github.com/google/adk-python) that creates targeted research plans and automatically researches and answers your questions with comprehensive, well-cited responses.
 
 ## Workflow
 
-The system processes user queries through four main phases, powered by [Gemini 2.0 Flash](https://cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/2-0-flash) under the hood:
+The system processes user queries through four main phases:
 
 1. **Classification** - Determines if the request is a valid research question, needs more information, or is a general query
 2. **Planning** - Creates a targeted research plan with up to 3 steps, combining ArXiv searches for academic foundations and web searches for current developments
