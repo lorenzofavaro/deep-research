@@ -27,6 +27,8 @@ class QdrantVectorStore(VectorStore):
         embedding_service: EmbeddingService,
         host: str = 'localhost',
         port: int = 6333,
+        grpc_port: int = 6334,
+        prefer_grpc: bool = True,
     ) -> None:
         """
         Initialize Qdrant vector store.
@@ -34,26 +36,55 @@ class QdrantVectorStore(VectorStore):
         Args:
             embedding_service: Service for generating embeddings
             host: Qdrant server host
-            port: Qdrant server port
+            port: Qdrant server HTTP port
+            grpc_port: Qdrant server gRPC port
+            prefer_grpc: Whether to prefer gRPC over HTTP when available
         """
         self.embedding_service = embedding_service
         self.host = host
         self.port = port
+        self.grpc_port = grpc_port
+        self.prefer_grpc = prefer_grpc
         self._client = None
-        logger.debug(f'Initialized Qdrant vector store at {host}:{port}')
+        logger.debug(f'Initialized Qdrant vector store at {host}:{port} (HTTP) / {host}:{grpc_port} (gRPC)')
 
     @property
     def client(self) -> QdrantClient:
         """
-        Lazy initialization of Qdrant client.
+        Lazy initialization of Qdrant client with gRPC preference.
 
         Returns:
             QdrantClient instance
         """
         if self._client is None:
-            self._client = QdrantClient(
-                host=self.host, port=self.port, check_compatibility=False,
-            )
+            if self.prefer_grpc:
+                try:
+                    # Try gRPC connection first
+                    logger.debug(f'Attempting gRPC connection to {self.host}:{self.grpc_port}')
+                    self._client = QdrantClient(
+                        host=self.host, 
+                        port=self.grpc_port, 
+                        prefer_grpc=True,
+                        check_compatibility=False,
+                    )
+                    # Test the connection
+                    self._client.get_collections()
+                    logger.info(f'Successfully connected to Qdrant via gRPC on {self.host}:{self.grpc_port}')
+                except Exception as e:
+                    logger.warning(f'gRPC connection failed: {e}. Falling back to HTTP on port {self.port}')
+                    self._client = None
+            
+            # Fall back to HTTP if gRPC failed or not preferred
+            if self._client is None:
+                logger.debug(f'Using HTTP connection to {self.host}:{self.port}')
+                self._client = QdrantClient(
+                    host=self.host, 
+                    port=self.port, 
+                    prefer_grpc=False,
+                    check_compatibility=False,
+                )
+                logger.info(f'Successfully connected to Qdrant via HTTP on {self.host}:{self.port}')
+        
         return self._client
 
     def _ensure_collection(self, collection_name: str) -> bool:

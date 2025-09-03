@@ -28,9 +28,11 @@ def create_vector_store(config: Config) -> VectorStore:
             embedding_service=embedding_service,
             host=config.qdrant_host,
             port=config.qdrant_port,
+            grpc_port=config.qdrant_grpc_port,
+            prefer_grpc=config.qdrant_prefer_grpc,
         )
         logger.debug(
-            f'Created Qdrant vector store at {config.qdrant_host}:{config.qdrant_port}',
+            f'Created Qdrant vector store at {config.qdrant_host}:{config.qdrant_port} (HTTP) / {config.qdrant_host}:{config.qdrant_grpc_port} (gRPC)',
         )
         return store
     else:

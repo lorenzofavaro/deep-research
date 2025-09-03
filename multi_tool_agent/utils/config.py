@@ -12,6 +12,8 @@ class Config:
         )  # qdrant, vertex_ai
         self.qdrant_host = os.getenv('QDRANT_HOST', 'localhost')
         self.qdrant_port = int(os.getenv('QDRANT_PORT', '6333'))
+        self.qdrant_grpc_port = int(os.getenv('QDRANT_GRPC_PORT', '6334'))
+        self.qdrant_prefer_grpc = os.getenv('QDRANT_PREFER_GRPC', 'true').lower() == 'true'
         self.qdrant_collection = os.getenv('QDRANT_COLLECTION', 'documents')
 
         self.embedding_type = os.getenv('EMBEDDING_TYPE', 'openai')  # openai
@@ -31,6 +33,8 @@ class Config:
             'vector_store_type': self.vector_store_type,
             'qdrant_host': self.qdrant_host,
             'qdrant_port': self.qdrant_port,
+            'qdrant_grpc_port': self.qdrant_grpc_port,
+            'qdrant_prefer_grpc': self.qdrant_prefer_grpc,
             'qdrant_collection': self.qdrant_collection,
             'embedding_type': self.embedding_type,
             'embedding_model': self.embedding_model,
