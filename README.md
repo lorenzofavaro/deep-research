@@ -6,6 +6,8 @@ A **multi-agent AI research assistant**, powered by [Gemini 2.0 Flash](https://c
 
 ## Workflow
 
+![Workflow](docs/workflow.png)
+
 The system processes user queries through four main phases:
 
 1. **Classification** - Determines if the request is a valid research question, needs more information, or is a general query
