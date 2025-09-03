@@ -94,3 +94,5 @@ The system processes user queries through four main phases:
 - *How do quantum computing algorithms compare to classical machine learning for optimization problems?*
 - *What are the current applications of CRISPR technology in treating genetic disorders?*
 - *What are the latest developments in renewable energy storage solutions?*
+
+https://github.com/user-attachments/assets/b72a65c0-4c1c-4474-9519-9c96f4254783
