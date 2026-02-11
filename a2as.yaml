@@ -1,0 +1,550 @@
+manifest:
+  version: "0.1.3"
+  schema: https://a2as.org/cert/schema
+  subject:
+    name: lorenzofavaro/deep-research
+    source: https://github.com/lorenzofavaro/deep-research
+    branch: main
+    commit: "94606112"
+    scope: [multi_tool_agent/agent.py, multi_tool_agent/core/agents/main/aggregate.py, multi_tool_agent/core/agents/main/answer.py,
+      multi_tool_agent/core/agents/main/classify.py, multi_tool_agent/core/agents/main/plan.py, multi_tool_agent/core/agents/main/research.py,
+      multi_tool_agent/core/agents/research/arxiv/arx_agent.py, multi_tool_agent/core/agents/research/arxiv/filter.py, multi_tool_agent/core/agents/research/arxiv/find.py,
+      multi_tool_agent/core/agents/research/arxiv/ingest.py, multi_tool_agent/core/agents/research/arxiv/rag.py, multi_tool_agent/core/agents/research/web/search_agent.py,
+      multi_tool_agent/core/services.py, multi_tool_agent/core/tools/arxiv.py, multi_tool_agent/data/document_service.py,
+      multi_tool_agent/data/vector_stores/qdrant.py, multi_tool_agent/utils/config.py, multi_tool_agent/utils/logger.py, multi_tool_agent/utils/utils.py]
+  issued:
+    by: A2AS.org
+    at: '2026-02-11T16:38:59Z'
+    url: https://a2as.org/certified/agents/lorenzofavaro/deep-research
+  signatures:
+    digest: sha256:HHG0K_siy2JKJQJZRD-OTA-agQXGGKVhl-8z7IoGthg
+    key: ed25519:IKCWOMv73iI9J-GHThzSj4d18W0ggq_zBFPj2OqrCMM
+    sig: ed25519:J4mVc9RICpyuXjebq1n0JPyIwJFhaOggZendxMsUnMwvc7sfprbJGiYvkcd8cki5PMhjGr2jnTNzMzzbB_Q5Cg
+
+agents:
+  agent.ArxivAgent:
+    type: class
+    models: [gemini-2.5-flash]
+    params:
+      class: ArxivAgent
+      base: BaseAgent
+      name: name
+  agent.ArxivAgent._find_step:
+    type: class
+    models: [gemini-2.5-flash]
+    params:
+      name: find_step
+      description: Find papers on arxiv
+      run_id: ''
+      agent_id: ''
+      class: ArxivAgent
+  agent.IngestStep:
+    type: class
+    models: [gemini-2.5-flash]
+    params:
+      class: IngestStep
+      base: BaseAgent
+  agent.RAGStep:
+    type: class
+    models: [gemini-2.5-flash]
+    params:
+      class: RAGStep
+      base: BaseAgent
+  agent.WebSearchAgent:
+    type: class
+    models: [gemini-2.5-flash]
+    params:
+      class: WebSearchAgent
+      base: BaseAgent
+      name: name
+  agent.WebSearchAgent._web_search_llm:
+    type: class
+    models: [gemini-2.0-flash]
+    tools: [MCPToolset, tavily-search]
+    mcp: [MCPToolset]
+    params:
+      name: web_search_{agent_id}
+      output_key: results:{self._run_id}:{self._agent_id}
+      class: WebSearchAgent
+  aggregate:
+    type: instance
+    models: [gemini-2.5-flash]
+    params:
+      class: AggregateStep
+      base: BaseAgent
+      name: name
+      description: ''
+  answer_agent.:
+    type: instance
+    models: [gemini-2.5-flash]
+    params:
+      class: AnswerAgent
+      base: BaseAgent
+      name: name
+  answer_agent._answer_llm:
+    type: instance
+    models: [gemini-2.0-flash]
+    params:
+      name: answer
+      class: AnswerAgent
+  classify_agent:
+    type: instance
+    models: [gemini-2.0-flash]
+    params:
+      name: ClassifyAgent
+      instruction: [You are a Web Research Agent specialized in finding comprehensive and up-to-date information online.,
+        '**Your Role:**', '- Search the internet for current, relevant information that complements academic research', '-
+          Find recent developments, news, industry reports, and web-based content', '- Provide diverse perspectives and real-world
+          applications of research topics', '- Identify trends, practical implementations, and emerging discussions', '**Search
+          Strategy:**', 1. Analyze the user query to identify key concepts and search terms, 2. Perform targeted searches
+          to gather comprehensive information, '3. Focus on credible sources: reputable websites, industry publications, tech
+          blogs, company reports', 4. Look for recent content (prioritize information from the last 1-2 years when relevant),
+        5. Gather multiple perspectives and viewpoints on the topic, '**Output Guidelines:**', '- Structure your response
+          as a numbered list of knowledge pieces', '- For each knowledge piece, provide:', '* A clear, concise statement of
+          the knowledge/insight', '* The specific online source(s) where this information was found (include URLs)', '- Focus
+          on key insights, trends, and practical applications', '- Note the recency and credibility of sources when relevant',
+        '**Quality Standards:**', '- Prioritize authoritative and credible sources', '- Avoid outdated information unless
+          historical context is needed', '- Cross-reference information when possible', '- Be transparent about limitations
+          or conflicting information found.', 'Query:', '{query}']
+      description: Classify user requests and provide follow-up messages
+      input_schema: UserRequest
+      output_schema: ClassificationResult
+      output_key: classification
+  filter_agent:
+    type: instance
+    models: [gemini-2.0-flash]
+    params:
+      name: FilterAgent
+      instruction: [You are a Web Research Agent specialized in finding comprehensive and up-to-date information online.,
+        '**Your Role:**', '- Search the internet for current, relevant information that complements academic research', '-
+          Find recent developments, news, industry reports, and web-based content', '- Provide diverse perspectives and real-world
+          applications of research topics', '- Identify trends, practical implementations, and emerging discussions', '**Search
+          Strategy:**', 1. Analyze the user query to identify key concepts and search terms, 2. Perform targeted searches
+          to gather comprehensive information, '3. Focus on credible sources: reputable websites, industry publications, tech
+          blogs, company reports', 4. Look for recent content (prioritize information from the last 1-2 years when relevant),
+        5. Gather multiple perspectives and viewpoints on the topic, '**Output Guidelines:**', '- Structure your response
+          as a numbered list of knowledge pieces', '- For each knowledge piece, provide:', '* A clear, concise statement of
+          the knowledge/insight', '* The specific online source(s) where this information was found (include URLs)', '- Focus
+          on key insights, trends, and practical applications', '- Note the recency and credibility of sources when relevant',
+        '**Quality Standards:**', '- Prioritize authoritative and credible sources', '- Avoid outdated information unless
+          historical context is needed', '- Cross-reference information when possible', '- Be transparent about limitations
+          or conflicting information found.', 'Query:', '{query}']
+      description: Filter papers
+      input_schema: PapersMetas
+      output_schema: PaperIDs
+      output_key: paper_ids
+  find_step.0:
+    type: instance
+    models: [gemini-2.5-flash]
+    params:
+      instance: find_step
+  find_step.1:
+    type: instance
+    models: [gemini-2.5-flash]
+    params:
+      class: FindStep
+      base: BaseAgent
+      name: name
+      description: ''
+      instance: find_step
+  parallel:
+    type: instance
+    params:
+      name: ParallelAgent
+      function: _run_async_impl
+      sub_agents: [sub_agents]
+  plan_agent:
+    type: instance
+    models: [gemini-2.0-flash]
+    params:
+      name: PlanAgent
+      instruction: [You are a Web Research Agent specialized in finding comprehensive and up-to-date information online.,
+        '**Your Role:**', '- Search the internet for current, relevant information that complements academic research', '-
+          Find recent developments, news, industry reports, and web-based content', '- Provide diverse perspectives and real-world
+          applications of research topics', '- Identify trends, practical implementations, and emerging discussions', '**Search
+          Strategy:**', 1. Analyze the user query to identify key concepts and search terms, 2. Perform targeted searches
+          to gather comprehensive information, '3. Focus on credible sources: reputable websites, industry publications, tech
+          blogs, company reports', 4. Look for recent content (prioritize information from the last 1-2 years when relevant),
+        5. Gather multiple perspectives and viewpoints on the topic, '**Output Guidelines:**', '- Structure your response
+          as a numbered list of knowledge pieces', '- For each knowledge piece, provide:', '* A clear, concise statement of
+          the knowledge/insight', '* The specific online source(s) where this information was found (include URLs)', '- Focus
+          on key insights, trends, and practical applications', '- Note the recency and credibility of sources when relevant',
+        '**Quality Standards:**', '- Prioritize authoritative and credible sources', '- Avoid outdated information unless
+          historical context is needed', '- Cross-reference information when possible', '- Be transparent about limitations
+          or conflicting information found.', 'Query:', '{query}']
+      planner: PlanReActPlanner
+      description: Plan a list of steps to gather all the information needed to answer the user query
+      input_schema: ClassificationResult
+      output_schema: ResearchPlan
+      output_key: research_plan
+  research_agent.0:
+    type: instance
+    models: [gemini-2.5-flash]
+    params:
+      name: ResearchAgent
+      description: Coordinates research steps
+      run_id: ''
+      services: self.services
+      function: _run_async_impl
+      instance: research_agent
+  research_agent.1:
+    type: instance
+    models: [gemini-2.5-flash]
+    params:
+      class: ResearchAgent
+      base: BaseAgent
+      instance: research_agent
+  root_agent.0:
+    type: instance
+    models: [gemini-2.5-flash]
+    params:
+      name: root
+      description: Root Agent
+      classify_agent: classify_agent
+      plan_agent: plan_agent
+      services: ServiceContainer(config)
+      instance: root_agent
+  root_agent.1:
+    type: instance
+    models: [gemini-2.5-flash]
+    params:
+      class: RootAgent
+      base: BaseAgent
+      instance: root_agent
+
+models:
+  gemini-2.0-flash:
+    type: literal
+    agents: [plan_agent, classify_agent, filter_agent, answer_agent._answer_llm, agent.WebSearchAgent._web_search_llm]
+  gemini-2.5-flash:
+    type: default
+    agents: [find_step.0, research_agent.0, root_agent.0, agent.ArxivAgent._find_step, agent.ArxivAgent, agent.RAGStep, agent.IngestStep,
+      agent.WebSearchAgent, aggregate, find_step.1, root_agent.1, research_agent.1, answer_agent.]
+
+tools:
+  MCPToolset:
+    type: mcp
+    agents: [agent.WebSearchAgent._web_search_llm]
+    params:
+      class: MCPToolset
+      mcp_server: MCPToolset
+  tavily-search:
+    type: mcp
+    agents: [agent.WebSearchAgent._web_search_llm]
+    mcp: [MCPToolset]
+    params:
+      source: tool_filter
+      mcp_server: MCPToolset
+
+mcp:
+  MCPToolset:
+    type: process
+    agents: [agent.WebSearchAgent._web_search_llm]
+    params:
+      class: MCPToolset
+      connection_type: StdioConnectionParams
+      command: npx
+      args: [-y, tavily-mcp@latest]
+      env:
+        TAVILY_API_KEY: TAVILY_API_KEY
+      timeout: "30.0"
+      tool_filter: [tavily-search]
+
+teams:
+  parallel:
+    type: parallel
+    agents: [parallel, sub_agents]
+
+imports:
+  ABC: abc.ABC
+  abstractmethod: abc.abstractmethod
+  AggregateStep: multi_tool_agent.core.agents.main.aggregate.AggregateStep
+  AnswerAgent: multi_tool_agent.core.agents.main.answer.AnswerAgent
+  Any: typing.Any
+  ArxivAgent: multi_tool_agent.core.agents.research.arxiv.arx_agent.ArxivAgent
+  AsyncGenerator: collections.abc.AsyncGenerator
+  AsyncOpenAI: openai.AsyncOpenAI
+  BaseAgent: google.adk.agents.BaseAgent
+  BaseModel: pydantic.BaseModel
+  BytesIO: io.BytesIO
+  classify_agent: multi_tool_agent.core.agents.main.classify.classify_agent
+  Config: multi_tool_agent.utils.config.Config
+  config: multi_tool_agent.utils.config.config
+  ConfigDict: pydantic.ConfigDict
+  create_document_service: multi_tool_agent.data.document_service.create_document_service
+  create_embedding_service: multi_tool_agent.data.embedding.create_embedding_service
+  create_vector_store: multi_tool_agent.data.vector_store.create_vector_store
+  dataclass: dataclasses.dataclass
+  Distance: qdrant_client.models.Distance
+  Document: multi_tool_agent.data.vector_stores.base.Document
+  DocumentIngestionService: multi_tool_agent.data.document_service.DocumentIngestionService
+  EmbeddingService: multi_tool_agent.data.embeddings.base.EmbeddingService
+  Event: google.adk.events.Event
+  EventActions: google.adk.events.EventActions
+  feedparser: feedparser
+  Field: pydantic.Field
+  FieldCondition: qdrant_client.models.FieldCondition
+  Filter: qdrant_client.models.Filter
+  filter_agent: multi_tool_agent.core.agents.research.arxiv.filter.filter_agent
+  FindStep: multi_tool_agent.core.agents.research.arxiv.find.FindStep
+  Generator: collections.abc.Generator
+  get_arxiv_paper: multi_tool_agent.core.tools.arxiv.get_arxiv_paper
+  get_logger: multi_tool_agent.utils.logger.get_logger
+  IngestStep: multi_tool_agent.core.agents.research.arxiv.ingest.IngestStep
+  InvocationContext: google.adk.agents.invocation_context.InvocationContext
+  json: json
+  Literal: typing.Literal
+  LlmAgent: google.adk.agents.LlmAgent
+  logging: logging
+  MatchValue: qdrant_client.models.MatchValue
+  MCPToolset: google.adk.tools.mcp_tool.mcp_toolset.MCPToolset
+  OpenAIEmbedding: multi_tool_agent.data.embeddings.openai_embeddings.OpenAIEmbedding
+  Optional: typing.Optional
+  os: os
+  ParallelAgent: google.adk.agents.ParallelAgent
+  PdfReader: PyPDF2.PdfReader
+  plan_agent: multi_tool_agent.core.agents.main.plan.plan_agent
+  PlanReActPlanner: google.adk.planners.plan_re_act_planner.PlanReActPlanner
+  PointIdsList: qdrant_client.models.PointIdsList
+  PointStruct: qdrant_client.models.PointStruct
+  QdrantClient: qdrant_client.QdrantClient
+  QdrantVectorStore: multi_tool_agent.data.vector_stores.qdrant.QdrantVectorStore
+  RAGStep: multi_tool_agent.core.agents.research.arxiv.rag.RAGStep
+  random: random
+  re: re
+  requests: requests
+  ResearchAgent: multi_tool_agent.core.agents.main.research.ResearchAgent
+  search_arxiv: multi_tool_agent.core.tools.arxiv.search_arxiv
+  SearchResult: multi_tool_agent.data.vector_stores.base.SearchResult
+  ServiceContainer: multi_tool_agent.core.services.ServiceContainer
+  StdioConnectionParams: google.adk.tools.mcp_tool.mcp_session_manager.StdioConnectionParams
+  StdioServerParameters: mcp.StdioServerParameters
+  types: google.genai.types
+  uuid: uuid
+  valid_uuid: multi_tool_agent.utils.utils.valid_uuid
+  VectorParams: qdrant_client.models.VectorParams
+  VectorStore: multi_tool_agent.data.vector_stores.base.VectorStore
+  WebSearchAgent: multi_tool_agent.core.agents.research.web.search_agent.WebSearchAgent
+
+functions:
+  __init__:
+    type: sync
+    module: multi_tool_agent.core.agents.research.web.search_agent
+    args: [self]
+    params:
+      returns: None
+  _ensure_collection:
+    type: sync
+    module: multi_tool_agent.data.vector_stores.qdrant
+    args: [self, collection_name]
+    params:
+      returns: bool
+  _run_async_impl:
+    type: async
+    module: multi_tool_agent.core.agents.research.web.search_agent
+    args: [self, context]
+    params:
+      returns: AsyncGenerator
+  add_documents:
+    type: async
+    module: multi_tool_agent.data.vector_stores.qdrant
+    args: [self, documents, collection_name]
+    params:
+      returns: bool
+  chunk_text:
+    type: sync
+    module: multi_tool_agent.data.document_service
+    args: [self, text, size]
+    params:
+      returns: Generator
+  client:
+    type: sync
+    module: multi_tool_agent.data.vector_stores.qdrant
+    args: [self]
+    params:
+      returns: QdrantClient
+  create_document_service:
+    type: sync
+    module: multi_tool_agent.data.document_service
+    args: [config]
+    params:
+      returns: DocumentIngestionService
+  create_embedding_service:
+    type: sync
+    module: multi_tool_agent.data.embedding
+    args: [config]
+    params:
+      returns: EmbeddingService
+  create_vector_store:
+    type: sync
+    module: multi_tool_agent.data.vector_store
+    args: [config]
+    params:
+      returns: VectorStore
+  delete_document:
+    type: async
+    module: multi_tool_agent.data.vector_stores.qdrant
+    args: [self, document_id, collection_name]
+    params:
+      returns: bool
+  document_service:
+    type: sync
+    module: multi_tool_agent.core.services
+    args: [self]
+    params:
+      returns: DocumentIngestionService
+  embed_text:
+    type: async
+    module: multi_tool_agent.data.embeddings.openai_embeddings
+    args: [self, text]
+    params:
+      returns: list[float]
+  embed_texts:
+    type: async
+    module: multi_tool_agent.data.embeddings.openai_embeddings
+    args: [self, texts]
+    params:
+      returns: list[list[float]]
+  get_arxiv_paper:
+    type: sync
+    module: multi_tool_agent.core.tools.arxiv
+    args: [arxiv_id]
+    params:
+      returns: tuple
+  get_logger:
+    type: sync
+    module: multi_tool_agent.utils.logger
+    args: [name]
+    params:
+      returns: logging.Logger
+  ingest_document:
+    type: async
+    module: multi_tool_agent.data.document_service
+    args: [self, document_id, content, metadata, collection_name, max_length]
+    params:
+      returns: bool
+  process_text:
+    type: sync
+    module: multi_tool_agent.data.document_service
+    args: [self, text]
+    params:
+      returns: str
+  search:
+    type: async
+    module: multi_tool_agent.data.vector_stores.qdrant
+    args: [self, query_vector, collection_name, top_k, filters]
+    params:
+      returns: list[SearchResult]
+  search_arxiv:
+    type: sync
+    module: multi_tool_agent.core.tools.arxiv
+    args: [query, max_results, start]
+    params:
+      returns: list[dict]
+  search_by_text:
+    type: async
+    module: multi_tool_agent.data.vector_stores.qdrant
+    args: [self, query_text, collection_name, top_k, filters]
+    params:
+      returns: list[SearchResult]
+  search_documents:
+    type: async
+    module: multi_tool_agent.data.document_service
+    args: [self, query_text, top_k, include_content, filters, collection_name]
+    params:
+      returns: list[dict]
+  setup_logger:
+    type: sync
+    module: multi_tool_agent.utils.logger
+    args: [name, level]
+    params:
+      returns: logging.Logger
+  to_dict:
+    type: sync
+    module: multi_tool_agent.utils.config
+    args: [self]
+    params:
+      returns: dict
+  valid_uuid:
+    type: sync
+    module: multi_tool_agent.utils.utils
+    params:
+      returns: str
+  vector_size:
+    type: sync
+    module: multi_tool_agent.data.embeddings.openai_embeddings
+    args: [self]
+    params:
+      returns: int
+
+variables:
+  EMBEDDING_MODEL:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [multi_tool_agent.utils.config]
+  EMBEDDING_TYPE:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [multi_tool_agent.utils.config]
+  LOG_LEVEL:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [multi_tool_agent.utils.logger]
+  OPENAI_API_KEY:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [multi_tool_agent.utils.config]
+  QDRANT_COLLECTION:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [multi_tool_agent.utils.config]
+  QDRANT_GRPC_PORT:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [multi_tool_agent.utils.config]
+  QDRANT_HOST:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [multi_tool_agent.utils.config]
+  QDRANT_PORT:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [multi_tool_agent.utils.config]
+  QDRANT_PREFER_GRPC:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [multi_tool_agent.utils.config]
+  VECTOR_STORE_TYPE:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [multi_tool_agent.utils.config]
+
+networks:
+  arxiv.org:
+    type: api
+    actions: [GET]
+    urls: ['/{...}']
+    protocols: [http]
+    ports: ["80"]
+    params:
+      pattern: http://arxiv.org/pdf/{arxiv_id}.pdf
+      caller: [get_arxiv_paper]
+  arxiv.org.1:
+    type: api
+    actions: [GET]
+    urls: ['/{...}']
+    protocols: [http]
+    ports: ["80"]
+    params:
+      pattern: http://arxiv.org/abs/{arxiv_id}
+      caller: [get_arxiv_paper]
