@@ -2,11 +2,10 @@ from typing import Literal
 from typing import Optional
 
 from google.adk.agents import LlmAgent
-from google.adk.agents.callback_context import CallbackContext
 from pydantic import BaseModel
 from pydantic import Field
 
-from multi_tool_agent.core.llm import isolated_llm_agent
+from multi_tool_agent.core.llm import llm_agent
 from multi_tool_agent.utils.config import config
 from multi_tool_agent.utils.utils import today
 
@@ -46,8 +45,17 @@ Use the previous conversation to interpret the latest message. Write next_messag
 personalize it when possible."""
 
 
-def _build_input(callback_context: CallbackContext) -> str:
-    *previous, latest = callback_context.state.get('conversation', [])
+def classify_input(conversation: list[dict[str, str]]) -> str:
+    """
+    Build the classifier input from the conversation, whose last entry is the latest user message.
+
+    Args:
+        conversation: Messages as {"role": "user" | "assistant", "text": ...}
+
+    Returns:
+        The classifier input
+    """
+    *previous, latest = conversation
     lines = [f'Current date: {today()}', '', 'Previous conversation:']
     for turn in previous:
         speaker = 'User' if turn['role'] == 'user' else 'Assistant'
@@ -59,12 +67,10 @@ def _build_input(callback_context: CallbackContext) -> str:
 
 
 def classify_agent() -> LlmAgent:
-    """Create the agent that classifies the latest message of the conversation stored in the state."""
-    return isolated_llm_agent(
+    """Create the agent that classifies the latest message of a conversation (input: `classify_input`)."""
+    return llm_agent(
         name='ClassifyAgent',
         model=config.model,
         instruction=system_prompt,
-        build_input=_build_input,
         output_schema=ClassificationResult,
-        output_key='classification',
     )

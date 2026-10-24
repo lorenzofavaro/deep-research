@@ -1,15 +1,9 @@
-import asyncio
-from types import SimpleNamespace
-
-from google.adk.models import LlmRequest
-from google.adk.runners import InMemoryRunner
-from google.genai import types
+from google.adk.models import FallbackModel
+from google.adk.models import Gemini
 
 from multi_tool_agent.core.agents.main.answer import build_registry
 from multi_tool_agent.core.agents.main.answer import format_references
-from multi_tool_agent.core.agents.main.research import collect_results
-from multi_tool_agent.core.agents.research.base import ResearchStepAgent
-from multi_tool_agent.core.llm import isolated_llm_agent
+from multi_tool_agent.core.llm import build_model
 from multi_tool_agent.core.models import Finding
 from multi_tool_agent.core.models import ResearchStep
 from multi_tool_agent.core.models import Source
@@ -82,49 +76,6 @@ def test_references_list_only_valid_cited_sources():
     assert format_references('No citations.', registry) == ''
 
 
-def test_isolated_agent_replaces_history():
-    agent = isolated_llm_agent(
-        name='test', model='m', instruction='i', output_key='k',
-        build_input=lambda context: f'input {context.state["x"]}',
-    )
-    request = LlmRequest(
-        contents=[
-            types.Content(
-                role='user', parts=[types.Part(text='history')],
-            ),
-        ],
-    )
-    agent.before_model_callback(SimpleNamespace(state={'x': 1}), request)
-    assert [part.text for content in request.contents for part in content.parts] == [
-        'input 1',
-    ]
-
-
-class FailingStep(ResearchStepAgent):
-    async def _research(self, context, result):
-        raise RuntimeError('boom')
-        yield
-
-
-def test_failing_step_still_stores_result():
-    agent = FailingStep(
-        name='failing', run_id='run',
-        step_id='s1', step=STEP, question='q',
-    )
-    runner = InMemoryRunner(agent=agent, app_name='test')
-
-    async def run():
-        session = await runner.session_service.create_session(app_name='test', user_id='u')
-        message = types.Content(role='user', parts=[types.Part(text='hi')])
-        async for _ in runner.run_async(user_id='u', session_id=session.id, new_message=message):
-            pass
-        return await runner.session_service.get_session(app_name='test', user_id='u', session_id=session.id)
-
-    session = asyncio.run(run())
-    [result] = collect_results(session.state, 'run')
-    assert result.error == 'boom'
-
-
 def test_boolean_search_drops_fields_categories_and_authors():
     query = '(ti:Mamba OR abs:"state space model") AND (cat:cs.CL OR cat:cs.LG) AND au:Gu ANDNOT abs:vision'
     assert to_boolean_search(
@@ -151,3 +102,21 @@ def test_arxiv_id_from_doi_or_locations():
     }
     assert _arxiv_id(work) == '2306.02272'
     assert _arxiv_id({'doi': None, 'locations': []}) is None
+
+
+def test_model_chain_falls_back_on_quota_errors():
+    single = build_model('gemini-flash-latest')
+    assert isinstance(
+        single, Gemini,
+    ) and 429 in single.retry_options.http_status_codes
+
+    chain = build_model('gemini-flash-latest, gemini-flash-lite-latest')
+    assert isinstance(chain, FallbackModel)
+    primary, backup = chain.models
+    assert (primary.model, backup.model) == (
+        'gemini-flash-latest', 'gemini-flash-lite-latest',
+    )
+    # A quota error moves to the backup right away instead of being retried on the primary
+    assert 429 not in primary.retry_options.http_status_codes
+    assert 429 in backup.retry_options.http_status_codes
+    assert 429 in chain.retriable_status_codes

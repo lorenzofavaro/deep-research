@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.12.0",
     "feedparser>=6.0.11",
-    "google-adk>=1.13.0",
+    "google-adk>=2.12.0",
     "httpx>=0.28.0",
     "pydantic>=2.11.7",
     "pypdf>=5.0.0",

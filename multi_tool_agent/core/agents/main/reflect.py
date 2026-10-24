@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from pydantic import Field
 
 from multi_tool_agent.core.agents.main.plan import TOOLS_GUIDE
-from multi_tool_agent.core.llm import isolated_llm_agent
+from multi_tool_agent.core.llm import llm_agent
 from multi_tool_agent.core.models import ResearchStep
 from multi_tool_agent.core.models import StepResult
 from multi_tool_agent.utils.config import config
@@ -58,23 +58,25 @@ def _format_results(results: list[StepResult]) -> str:
     return '\n'.join(lines)
 
 
-def reflect_agent(*, question: str, results: list[StepResult]) -> LlmAgent:
+def reflect_input(question: str, results: list[StepResult]) -> str:
     """
-    Create the agent that reviews the findings and plans follow-up steps.
+    Build the reflection input from the results of all the steps executed so far.
 
     Args:
         question: The research question
-        results: Results of all the steps executed so far
+        results: Results of the executed steps
 
     Returns:
-        The configured LlmAgent
+        The reflection input
     """
-    user_input = f'Current date: {today()}\nResearch question: {question}\n\n# Findings so far\n{_format_results(results)}'
-    return isolated_llm_agent(
+    return f'Current date: {today()}\nResearch question: {question}\n\n# Findings so far\n{_format_results(results)}'
+
+
+def reflect_agent() -> LlmAgent:
+    """Create the agent that reviews the findings and plans follow-up steps (input: `reflect_input`)."""
+    return llm_agent(
         name='ReflectAgent',
         model=config.model,
         instruction=system_prompt,
-        build_input=lambda _: user_input,
         output_schema=Reflection,
-        output_key='reflection',
     )

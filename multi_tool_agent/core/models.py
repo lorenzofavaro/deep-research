@@ -54,4 +54,6 @@ class StepResult(BaseModel):
     sources: list[Source] = Field(default_factory=list)
     # Findings grouped by Source.key
     findings: dict[str, list[Finding]] = Field(default_factory=dict)
+    # Short progress notes, e.g. number of candidates
+    notes: list[str] = Field(default_factory=list)
     error: Optional[str] = None

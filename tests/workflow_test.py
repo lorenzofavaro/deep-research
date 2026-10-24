@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 import pytest
+from google.adk import Workflow
 from google.adk.models import BaseLlm
 from google.adk.models import LlmRequest
 from google.adk.models import LlmResponse
@@ -171,7 +172,9 @@ def script(monkeypatch):
 def run(*messages: str) -> tuple[list[tuple[str, str]], dict]:
     """Run the root agent on a conversation; returns the (author, text) of each event and the final state."""
     runner = InMemoryRunner(
-        agent=agent_module.RootAgent(name='root'), app_name='test',
+        agent=Workflow(
+            name='root', edges=[('START', agent_module.research)],
+        ), app_name='test',
     )
 
     async def main():
@@ -316,8 +319,8 @@ def test_failing_tools_and_extractions_do_not_abort_the_run(script, monkeypatch)
     assert calls.count()['answer'] == 1
     assert '[1] "Page Two"' in events[-1][1]
     errors = [
-        value['error'] for key, value in state.items(
-        ) if key.startswith('step_') and value['error']
+        step['error']
+        for step in state['last_run']['steps'] if step['error']
     ]
     assert errors == ['arXiv is down']
 
