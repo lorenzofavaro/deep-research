@@ -1,55 +1,44 @@
-import os
 from typing import Any
-from typing import Optional
 
-from tavily import TavilyClient
+from tavily import AsyncTavilyClient
 
+from multi_tool_agent.utils.config import config
 from multi_tool_agent.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-def tavily_search(
-    query: str,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    max_results: int = 5,
-) -> dict[str, Any]:
+async def tavily_search(query: str, max_results: int = 5) -> list[dict[str, Any]]:
     """
-    Search for information using the Tavily API.
+    Search the web with Tavily, including the extracted text of each page.
 
     Args:
         query: The search query string
-        start_date: Optional start date for filtering results (YYYY-MM-DD format)
-        end_date: Optional end date for filtering results (YYYY-MM-DD format)
         max_results: Maximum number of results to return
 
     Returns:
-        Dictionary containing search results from Tavily API
+        List of results with title, url, published date (when known) and content
     """
     logger.debug(
         f'Searching Tavily with query: "{query}", max_results: {max_results}',
     )
-    if start_date:
-        logger.debug(f'Search start_date: {start_date}')
-    if end_date:
-        logger.debug(f'Search end_date: {end_date}')
+    client = AsyncTavilyClient(config.tavily_api_key)
+    response = await client.search(
+        query=query,
+        max_results=max_results,
+        include_raw_content='text',
+        timeout=60,
+    )
 
-    client = TavilyClient(os.getenv('TAVILY_API_KEY'))
+    results = []
+    for result in response.get('results', []):
+        results.append({
+            'title': result.get('title') or result['url'],
+            'url': result['url'],
+            'published': (result.get('published_date') or '')[:10],
+            # Fall back to the snippet when the page text could not be extracted
+            'content': result.get('raw_content') or result.get('content') or '',
+        })
 
-    # Build parameters dict, excluding None values
-    search_params = {'query': query, 'max_results': max_results}
-    if start_date is not None:
-        search_params['start_date'] = start_date
-    if end_date is not None:
-        search_params['end_date'] = end_date
-
-    try:
-        response = client.search(**search_params)
-        logger.info(
-            f'Tavily search completed successfully, returned {len(response.get("results", []))} results',
-        )
-        return response
-    except Exception as e:
-        logger.error(f'Error during Tavily search: {e}', exc_info=True)
-        raise
+    logger.info(f'Tavily search returned {len(results)} results')
+    return results

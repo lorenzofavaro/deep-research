@@ -1,3 +1,4 @@
+import datetime
 import random
 import uuid
 
@@ -14,3 +15,13 @@ def valid_uuid() -> str:
         chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
         uid = random.choice(chars) + uid[1:]
     return uid
+
+
+def today() -> str:
+    """
+    Return the current date, so that the agents can reason about recency.
+
+    Returns:
+        str: The current date in ISO format (YYYY-MM-DD).
+    """
+    return datetime.date.today().isoformat()

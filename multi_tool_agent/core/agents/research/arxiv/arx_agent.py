@@ -1,84 +1,130 @@
+import asyncio
+import re
 from collections.abc import AsyncGenerator
 
-from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event
 
 from multi_tool_agent.core.agents.research.arxiv.filter import filter_agent
-from multi_tool_agent.core.agents.research.arxiv.find import FindStep
-from multi_tool_agent.core.agents.research.arxiv.ingest import IngestStep
-from multi_tool_agent.core.agents.research.arxiv.rag import RAGStep
-from multi_tool_agent.data.document_service import DocumentIngestionService
+from multi_tool_agent.core.agents.research.arxiv.filter import PaperIDs
+from multi_tool_agent.core.agents.research.base import message
+from multi_tool_agent.core.agents.research.base import ResearchStepAgent
+from multi_tool_agent.core.models import Source
+from multi_tool_agent.core.models import StepResult
+from multi_tool_agent.core.tools.arxiv import get_arxiv_paper_text
+from multi_tool_agent.core.tools.arxiv import relax_query
+from multi_tool_agent.core.tools.arxiv import search_arxiv
+from multi_tool_agent.core.tools.openalex import get_citation_counts
+from multi_tool_agent.core.tools.openalex import search_cited_arxiv_papers
+from multi_tool_agent.utils.config import config
 from multi_tool_agent.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class ArxivAgent(BaseAgent):
-    """Agent for coordinating ArXiv paper research workflow."""
+class ArxivAgent(ResearchStepAgent):
+    """Research step on arXiv: search, select the most relevant papers, read them in full and extract findings."""
 
-    def __init__(
-        self,
-        *,
-        name: str,
-        run_id: str,
-        agent_id: str,
-        document_service: DocumentIngestionService,
-    ) -> None:
+    async def _research(self, context: InvocationContext, result: StepResult) -> AsyncGenerator[Event, None]:
         """
-        Initialize the ArXiv agent.
+        Execute the ArXiv research workflow.
 
         Args:
-            name: Name of the agent
-            run_id: Unique identifier for the current run
-            agent_id: Unique identifier for this agent instance
-            document_service: Service for document ingestion and retrieval
-        """
-        super().__init__(name=name)
-        self._run_id = run_id
-        self._agent_id = agent_id
-        self._document_service = document_service
-        self._find_step = FindStep(
-            name='find_step', description='Find papers on arxiv', run_id=run_id, agent_id=agent_id,
-        )
-        self._ingest_step = IngestStep(
-            name='ingest_step', description='Ingest documents', run_id=run_id, document_service=document_service,
-        )
-        self._rag_step = RAGStep(
-            name='rag_step', description='Perform RAG',
-            run_id=run_id, agent_id=agent_id, document_service=document_service,
-        )
-
-    async def _run_async_impl(self, context: InvocationContext) -> AsyncGenerator[Event, None]:
-        """
-        Execute the complete ArXiv research workflow.
-
-        Args:
-            context: Invocation context containing session state and configuration
+            context: Invocation context
+            result: Step result to fill
 
         Yields:
-            Events from each step of the workflow
+            Events from each stage of the workflow
         """
-        logger.debug(
-            f'Starting ArXiv research workflow for agent {self._agent_id}',
+        query = self._step.query
+        candidates, cited = await asyncio.gather(
+            search_arxiv(query, max_results=config.arxiv_candidates),
+            search_cited_arxiv_papers(
+                query, max_results=config.cited_candidates,
+            ),
         )
-
-        logger.debug('Starting ArXiv paper search step')
-        async for event in self._find_step.run_async(context):
-            yield event
-
-        logger.debug('Starting paper filtering step')
-        async for event in filter_agent.run_async(context):
-            yield event
-
-        logger.debug('Starting paper ingestion step')
-        async for event in self._ingest_step.run_async(context):
-            yield event
-
-        logger.debug('Starting RAG step')
-        async for event in self._rag_step.run_async(context):
-            yield event
-
-        logger.info(
-            f'Completed ArXiv research workflow for agent {self._agent_id}',
+        if not candidates and (relaxed := relax_query(query)) and relaxed != query:
+            logger.info(
+                f'No ArXiv results for "{query}", retrying with "{relaxed}"',
+            )
+            query = relaxed
+            candidates = await search_arxiv(query, max_results=config.arxiv_candidates)
+        candidates = await self._merge_with_citations(candidates, cited)
+        yield message(
+            self.name, f'arXiv `{query}`: {len(candidates)} candidates, {len(cited)} of the most cited from OpenAlex',
         )
+        if not candidates:
+            return
+
+        output_key = f'select_{self._run_id}_{self._step_id}'
+        selector = filter_agent(
+            name=f'select_{self._step_id}', output_key=output_key,
+            step=self._step, question=self._question, candidates=candidates,
+        )
+        async for event in selector.run_async(context):
+            yield event
+
+        # The model may add version suffixes or invent IDs: keep only known candidates
+        papers = {paper['id']: paper for paper in candidates}
+        selected_ids = PaperIDs.model_validate(
+            context.session.state.get(output_key) or {},
+        ).ids
+        selected = []
+        for paper_id in selected_ids:
+            paper = papers.get(re.sub(r'v\d+$', '', paper_id.strip()))
+            if paper and paper not in selected:
+                selected.append(paper)
+        selected = selected[:config.papers_per_step]
+        if not selected:
+            return
+
+        texts = await asyncio.gather(
+            *(
+                get_arxiv_paper_text(
+                    paper['id'], max_chars=config.paper_max_chars,
+                )
+                for paper in selected
+            ),
+            return_exceptions=True,
+        )
+        documents = []
+        for paper, text in zip(selected, texts):
+            if isinstance(text, BaseException):
+                logger.warning(f'Skipping ArXiv paper {paper["id"]}: {text}')
+                continue
+            source = Source(
+                key=f'arxiv:{paper["id"]}', kind='arxiv', title=paper['title'], url=paper['url'],
+                authors=paper['authors'], published=paper['published'],
+            )
+            documents.append((source, text))
+
+        async for event in self._extract(context, result, documents):
+            yield event
+
+    async def _merge_with_citations(self, candidates: list[dict], cited: list[dict]) -> list[dict]:
+        """
+        Merge the arXiv results with the most cited papers from OpenAlex, and add citation counts to all of them.
+
+        arXiv metadata wins for papers found by both, since it carries the preprint date.
+
+        Args:
+            candidates: Papers from the arXiv search
+            cited: Most cited papers from OpenAlex, with citation counts
+
+        Returns:
+            The merged candidates, each with a `citations` count when OpenAlex knows the paper
+        """
+        merged = {paper['id']: paper for paper in candidates}
+        for paper in cited:
+            merged.setdefault(paper['id'], paper)[
+                'citations'
+            ] = paper['citations']
+        missing = [
+            paper_id for paper_id,
+            paper in merged.items() if 'citations' not in paper
+        ]
+        counts = await get_citation_counts(missing) if missing else {}
+        for paper_id, count in counts.items():
+            if paper_id in merged:
+                merged[paper_id]['citations'] = count
+        return list(merged.values())

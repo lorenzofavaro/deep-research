@@ -2,37 +2,53 @@
 
 ## Overview
 
-A **multi-agent AI research assistant**, powered by [Gemini 2.0 Flash](https://cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/2-0-flash), built with [Google ADK](https://github.com/google/adk-python) that creates targeted research plans and automatically researches and answers your questions with comprehensive, well-cited responses.
+A **multi-agent AI research assistant** powered by [Gemini](https://ai.google.dev/gemini-api/docs/models), built with [Google ADK](https://github.com/google/adk-python). It plans the research, reads academic papers and web pages, digs deeper where the findings are incomplete, and answers with citations to the sources it actually read.
 
 ## Workflow
 
-<img src="docs/workflow.png" alt="Workflow" width="500"/>
+```mermaid
+flowchart TD
+    U[User message] --> C{Classify}
+    C -- general / need more info --> R[Reply to the user]
+    C -- valid --> P[Plan up to 3 steps]
+    P --> S
+    subgraph S[Research round: steps run in parallel]
+        A[arXiv + OpenAlex: search → select papers → read full text → extract findings]
+        W[Web: Tavily search → read pages → extract findings]
+    end
+    S --> F{Reflect: are the findings enough?}
+    F -- no, follow-up steps --> S
+    F -- yes / round limit --> X[Answer with numbered citations + references]
+```
 
-The system processes user queries through four main phases:
+1. **Classification** - Decides whether the latest message is a research question (including factual and news questions), needs clarification, or is out of scope. It reads the previous turns, so follow-ups and clarifications are turned into a self-contained question
+2. **Planning** - Creates up to 3 independent steps, each with a tool, a query in that tool's syntax (arXiv API syntax for papers, keywords for the web) and a goal
+3. **Research** - Runs the steps in parallel; every source is read in full and turned into structured findings (claim + verbatim evidence):
+   - **ArXiv**: collects candidates from the arXiv search (30, ranked by text relevance; the query is relaxed if it returns nothing) and from [OpenAlex](https://openalex.org/) (the 15 most cited arXiv papers matching the query, which the text search often misses), adds citation counts, lets the model select the 3 most relevant from title, abstract, date and citations, downloads their full text (arXiv HTML, PDF as fallback) and extracts findings from each paper
+   - **Web**: searches with [Tavily](https://tavily.com/) including the page text, and extracts findings from each page
+4. **Reflection** - Reviews the findings and, if important gaps remain, plans follow-up steps for another round (2 rounds by default)
+5. **Answer Synthesis** - Writes the answer from the findings only, citing sources as `[n]`; the references section is generated from the source metadata, listing only the sources actually cited
 
-1. **Classification** - Determines if the request is a valid research question, needs more information, or is a general query
-2. **Planning** - Creates a targeted research plan with up to 3 steps, combining ArXiv searches for academic foundations and web searches for current developments
-3. **Research Execution** - Runs the plan in parallel, with specialized agents handling:
-   - **ArXiv Research**: Scans top 50 papers, selects top 3 based on abstracts, ingests them into [Qdrant](https://qdrant.tech/) with [OpenAI embeddings](https://platform.openai.com/docs/guides/embeddings), and performs RAG to extract relevant information while preserving URLs for citations
-   - **Web Search**: Uses [Tavily MCP server](https://docs.tavily.com/documentation/mcp) to gather current information and developments
-4. **Answer Synthesis** - Aggregates all findings and generates a comprehensive, well-cited response using the collected research data
+A failing source or step (network error, rate limit, model error) is logged and skipped: the run continues with the rest.
 
 ## Getting Started
 
 ### Prerequisites
 
-- `Python 3.11+`
-- API keys for supported AI providers:
+- `Python 3.11+` and [`uv`](https://docs.astral.sh/uv/)
+- API keys:
   - `Google AI API key` (for Gemini models)
-  - `OpenAI API key` (for embeddings, Gemini embeddings not yet implemented)
   - `Tavily API key` (for web search)
-- `Docker` (for local Qdrant setup) or access to a cloud vector database
+
+A research run makes roughly 15-20 model requests (more with a second round): about 5 go to `MODEL` (classification, planning, reflection, answer) and the rest to `FAST_MODEL` (paper selection and extraction, `gemini-flash-lite-latest` by default). The Gemini free tier has a small daily quota per model, so it allows only a few runs per day; use a paid key for regular use.
+
+OpenAlex works without a key on a small daily budget shared by IP address; for regular use, get a free key at [openalex.org](https://openalex.org/settings/api) and set `OPENALEX_API_KEY`.
 
 ### Setup
 
 1. **Clone the repository:**
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/lorenzofavaro/deep-research.git
    cd deep-research
    ```
 
@@ -42,45 +58,29 @@ The system processes user queries through four main phases:
    ```
 
 3. **Configure environment variables:**
-   
-   Copy the example environment file:
+
+   Copy the example environment file and set your API keys:
    ```bash
    cp multi_tool_agent/.env.example multi_tool_agent/.env
    ```
-   
-   Edit the `.env` file to set your API keys:
-   ```bash
-   # Google AI Configuration
-   GOOGLE_API_KEY=your_google_api_key_here
-   
-   # OpenAI and Search API Configuration
-   OPENAI_API_KEY=your_openai_api_key_here
-   TAVILY_API_KEY=your_tavily_api_key_here
-   
-   # Vector Store Configuration (default: Qdrant)
-   VECTOR_STORE_TYPE=qdrant
-   QDRANT_HOST=localhost
-   QDRANT_PORT=6333
-   QDRANT_GRPC_PORT=6334
-   QDRANT_PREFER_GRPC=true
-   
-   # Logging Configuration
-   LOG_LEVEL=INFO
-   ```
 
-4. **Set up vector database:**
-   
-   For local development with Docker:
-   ```bash
-   docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
-   ```
-   
-   Alternatively, you can use a cloud provider (Qdrant Cloud, etc.) or implement your own vector database by extending the base classes in `multi_tool_agent/data/vector_stores/`.
+   Optional variables select the models (`MODEL`, `FAST_MODEL`), the OpenAlex key and the research limits (steps, rounds, papers, pages); see [`.env.example`](multi_tool_agent/.env.example).
 
-5. **Execute the research system:**
-   
+4. **Execute the research system:**
+
    ```bash
    uv run adk run multi_tool_agent
+   ```
+
+   or use the ADK web UI, which also shows the events of each agent:
+   ```bash
+   uv run adk web
+   ```
+
+5. **Run the tests:**
+
+   ```bash
+   uv run pytest
    ```
 
 ## Usage Examples
