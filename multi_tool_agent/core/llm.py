@@ -7,6 +7,7 @@ from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event
+from google.adk.models import BaseLlm
 from google.adk.models import Gemini
 from google.adk.models import LlmRequest
 from google.adk.models import LlmResponse
@@ -21,6 +22,21 @@ logger = get_logger(__name__)
 RETRY_OPTIONS = types.HttpRetryOptions(
     attempts=5, initial_delay=2, max_delay=60,
 )
+
+
+def build_model(model: str) -> BaseLlm:
+    """
+    Create the model client used by every agent.
+
+    Kept as the single construction point so that tests can replace it with a scripted model.
+
+    Args:
+        model: Gemini model name
+
+    Returns:
+        The model client
+    """
+    return Gemini(model=model, retry_options=RETRY_OPTIONS)
 
 
 def isolated_llm_agent(
@@ -64,7 +80,7 @@ def isolated_llm_agent(
 
     return LlmAgent(
         name=name,
-        model=Gemini(model=model, retry_options=RETRY_OPTIONS),
+        model=build_model(model),
         # A provider bypasses ADK's {state} templating, which would choke on braces in the instruction
         instruction=lambda _: instruction,
         include_contents='none',

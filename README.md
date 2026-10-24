@@ -83,6 +83,16 @@ OpenAlex works without a key on a small daily budget shared by IP address; for r
    uv run pytest
    ```
 
+   The tests run the whole workflow offline, with a scripted model and stubbed search tools, so they need no API keys.
+
+6. **Smoke test against the real APIs:**
+
+   ```bash
+   uv run python evals/smoke.py
+   ```
+
+   It runs 3 simple questions (a current fact, a well-known paper, a mixed question) with minimal research budgets, about 5-8 model calls each, so it fits the Gemini free tier. It checks that each run completes, that every step finds something and that every citation has a reference, and it reports model calls, tokens and time. Use `--questions FILE` for your own questions and `--full-budget` for the configured budgets. Reports are saved in `evals/out/<system>/idx-<n>.md`, the layout used by [DeepResearch Bench II](https://github.com/imlrz/DeepResearch-Bench-II).
+
 ## Usage Examples
 
 ### Basic Research Query
