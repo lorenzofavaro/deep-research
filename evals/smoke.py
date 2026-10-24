@@ -27,11 +27,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / 'multi_tool_agent' / '.env')
 
-# Minimal budgets: one round, one paper and two pages per step (about 5-8 model calls per question)
+# Minimal budgets: one round, one paper and two pages per step (about 5-8 model calls per question). The number of
+# search candidates is not reduced, since it costs no model calls
 MINIMAL_BUDGET = {
     'MAX_ITERATIONS': '1',
-    'ARXIV_CANDIDATES': '10',
-    'CITED_CANDIDATES': '5',
     'PAPERS_PER_STEP': '1',
     'WEB_RESULTS': '2',
 }
@@ -86,10 +85,10 @@ async def run_question(question: str) -> dict[str, Any]:
     from google.adk.runners import InMemoryRunner
     from google.genai import types
 
-    from multi_tool_agent.agent import RootAgent
+    from multi_tool_agent.agent import root_agent
     from multi_tool_agent.core.models import StepResult
 
-    runner = InMemoryRunner(agent=RootAgent(name='root'), app_name='smoke')
+    runner = InMemoryRunner(agent=root_agent, app_name='smoke')
     session = await runner.session_service.create_session(app_name='smoke', user_id='smoke')
     usage = {'model_calls': 0, 'prompt_tokens': 0, 'output_tokens': 0}
     last_root_message = ''
@@ -110,18 +109,13 @@ async def run_question(question: str) -> dict[str, Any]:
         error = f'{type(e).__name__}: {e}'
 
     session = await runner.session_service.get_session(app_name='smoke', user_id='smoke', session_id=session.id)
-    state = session.state
-    steps = [
-        StepResult.model_validate(
-            value,
-        ) for key, value in state.items() if key.startswith('step_')
-    ]
+    last_run = session.state.get('last_run')
     return {
         'question': question,
-        'classification': (state.get('classification') or {}).get('type'),
-        'answer': state.get('answer', ''),
+        'researched': last_run is not None,
+        'answer': (last_run or {}).get('answer', ''),
         'references': last_root_message if last_root_message.startswith('**References**') else '',
-        'steps': steps,
+        'steps': [StepResult.model_validate(step) for step in (last_run or {}).get('steps', [])],
         'error': error,
         'seconds': round(time.monotonic() - started),
         **usage,
@@ -133,8 +127,10 @@ def check(result: dict[str, Any]) -> list[str]:
     failures = []
     if result['error']:
         failures.append(f'run failed: {result["error"]}')
-    if result['classification'] != 'valid':
-        failures.append(f'classified as {result["classification"]}')
+    if not result['researched']:
+        failures.append(
+            'no research was run (the question was not classified as research)',
+        )
     if not result['answer']:
         failures.append('empty answer')
     if not result['steps']:
@@ -187,6 +183,7 @@ async def main() -> int:
             'steps': [
                 {
                     'tool': step.step.tool, 'query': step.step.query,
+                    'notes': step.notes,
                     'sources': len(step.findings), 'findings': sum(map(len, step.findings.values())),
                     'error': step.error,
                 }

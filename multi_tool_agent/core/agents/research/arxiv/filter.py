@@ -4,7 +4,7 @@ from google.adk.agents import LlmAgent
 from pydantic import BaseModel
 from pydantic import Field
 
-from multi_tool_agent.core.llm import isolated_llm_agent
+from multi_tool_agent.core.llm import llm_agent
 from multi_tool_agent.core.models import ResearchStep
 from multi_tool_agent.utils.config import config
 from multi_tool_agent.utils.utils import today
@@ -36,19 +36,17 @@ judge them by relevance and recency instead.
 - Use only IDs that appear among the candidates."""
 
 
-def filter_agent(*, name: str, output_key: str, step: ResearchStep, question: str, candidates: list[dict]) -> LlmAgent:
+def filter_input(step: ResearchStep, question: str, candidates: list[dict]) -> str:
     """
-    Create the agent that selects which candidate papers to read.
+    Build the selection input: the step, the research question and the candidate papers.
 
     Args:
-        name: Unique name of the agent
-        output_key: State key for the selected PaperIDs
         step: The research step being executed
         question: The overall research question
-        candidates: Papers returned by the arXiv search
+        candidates: Papers returned by the arXiv and OpenAlex searches
 
     Returns:
-        The configured LlmAgent
+        The selection input
     """
     listing = [
         {
@@ -61,17 +59,19 @@ def filter_agent(*, name: str, output_key: str, step: ResearchStep, question: st
         }
         for paper in candidates
     ]
-    user_input = (
+    return (
         f'Current date: {today()}\n'
         f'Research question: {question}\n'
         f'Step goal: {step.goal}\n\n'
         f'Candidates:\n{json.dumps(listing, ensure_ascii=False, indent=1)}'
     )
-    return isolated_llm_agent(
-        name=name,
+
+
+def filter_agent() -> LlmAgent:
+    """Create the agent that selects which candidate papers to read (input: `filter_input`)."""
+    return llm_agent(
+        name='FilterAgent',
         model=config.fast_model,
         instruction=system_prompt.format(papers_num=config.papers_per_step),
-        build_input=lambda _: user_input,
         output_schema=PaperIDs,
-        output_key=output_key,
     )

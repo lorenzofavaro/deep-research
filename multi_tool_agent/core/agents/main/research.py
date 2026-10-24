@@ -1,82 +1,66 @@
-from collections.abc import AsyncGenerator
+import asyncio
 
-from google.adk.agents import BaseAgent
-from google.adk.agents import ParallelAgent
-from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event
+from google.adk.agents.context import Context
+from google.adk.workflow import node
 
-from multi_tool_agent.core.agents.research.arxiv.arx_agent import ArxivAgent
-from multi_tool_agent.core.agents.research.base import step_result_key
-from multi_tool_agent.core.agents.research.web.search_agent import WebSearchAgent
+from multi_tool_agent.core.agents.research.arxiv.arx_agent import research_arxiv
+from multi_tool_agent.core.agents.research.base import StepTask
+from multi_tool_agent.core.agents.research.web.search_agent import research_web
 from multi_tool_agent.core.models import ResearchStep
 from multi_tool_agent.core.models import StepResult
 from multi_tool_agent.utils.logger import get_logger
-from multi_tool_agent.utils.utils import valid_uuid
 
 logger = get_logger(__name__)
 
 
-def collect_results(state: dict, run_id: str) -> list[StepResult]:
+@node(name='research_step', rerun_on_resume=True)
+async def research_step(ctx: Context, node_input: StepTask) -> StepResult:
     """
-    Read the results of all the research steps of a run from the session state.
+    Execute one research step. Failures are recorded in the result instead of raised, so a failing step does not
+    affect the others.
 
     Args:
-        state: Session state
-        run_id: Unique identifier of the run
+        ctx: Node context
+        node_input: The step and the research question
 
     Returns:
-        The step results, in execution order
+        The step result
     """
-    prefix = step_result_key(run_id, '')
-    return [StepResult.model_validate(value) for key, value in state.items() if key.startswith(prefix)]
-
-
-class ResearchAgent(BaseAgent):
-    """Agent for executing a batch of research steps in parallel."""
-
-    def __init__(self, *, name: str, run_id: str, steps: list[ResearchStep], question: str) -> None:
-        """
-        Initialize the ResearchAgent.
-
-        Args:
-            name: Name of the agent
-            run_id: Unique identifier for the current run
-            steps: Research steps to execute
-            question: The overall research question
-        """
-        super().__init__(name=name)
-        self._run_id = run_id
-        self._steps = steps
-        self._question = question
-
-    async def _run_async_impl(self, context: InvocationContext) -> AsyncGenerator[Event, None]:
-        """
-        Execute the research steps with parallel agents, each storing a StepResult in the state.
-
-        Args:
-            context: Invocation context
-
-        Yields:
-            Events from the research execution process
-        """
-        sub_agents: list[BaseAgent] = []
-        for step in self._steps:
-            step_id = valid_uuid()
-            logger.debug(f'Processing research step {step_id}: {step}')
-            agent_class = ArxivAgent if step.tool == 'arxiv' else WebSearchAgent
-            sub_agents.append(
-                agent_class(
-                    # Names must be unique: ParallelAgent derives the branch of each sub-agent from its name
-                    name=f'{step.tool}_{step_id}',
-                    run_id=self._run_id,
-                    step_id=step_id,
-                    step=step,
-                    question=self._question,
-                ),
-            )
-
-        parallel = ParallelAgent(
-            name=f'parallel_{valid_uuid()}', sub_agents=sub_agents,
+    result = StepResult(step=node_input.step)
+    research = research_arxiv if node_input.step.tool == 'arxiv' else research_web
+    try:
+        await research(ctx, node_input, result)
+    except Exception as e:
+        logger.error(
+            f'Research step `{node_input.step.query}` failed: {e}', exc_info=True,
         )
-        async for event in parallel.run_async(context):
-            yield event
+        result.error = str(e)
+    return result
+
+
+async def run_research_round(ctx: Context, steps: list[ResearchStep], question: str) -> list[StepResult]:
+    """
+    Execute research steps in parallel, each in its own branch.
+
+    Args:
+        ctx: Context of the calling node
+        steps: Research steps to execute
+        question: The overall research question
+
+    Returns:
+        The step results, in the order of the steps
+    """
+    outputs = await asyncio.gather(
+        *(
+            ctx.run_node(
+                research_step, node_input=StepTask(step=step, question=question).model_dump(), use_sub_branch=True,
+            )
+            for step in steps
+        ),
+        return_exceptions=True,
+    )
+    return [
+        StepResult(step=step, error=str(output)) if isinstance(output, BaseException)
+        else StepResult.model_validate(output)
+        for step, output in zip(steps, outputs)
+    ]

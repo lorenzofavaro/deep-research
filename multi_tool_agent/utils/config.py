@@ -13,8 +13,13 @@ class Config:
         # Models: `model` drives classification, planning, reflection and the final answer,
         # `fast_model` the high-volume calls (paper selection and source extraction). Splitting them also spreads
         # the load over two per-model quotas
-        self.model = os.getenv('MODEL', 'gemini-flash-latest')
-        self.fast_model = os.getenv('FAST_MODEL', 'gemini-flash-lite-latest')
+        # Each value can be a comma-separated chain: on a quota, rate-limit or server error the next model is used
+        self.model = os.getenv(
+            'MODEL', 'gemini-flash-latest,gemini-flash-lite-latest',
+        )
+        self.fast_model = os.getenv(
+            'FAST_MODEL', 'gemini-flash-lite-latest,gemini-flash-latest',
+        )
 
         # Research loop
         self.max_steps = _int_env('MAX_STEPS', 3)

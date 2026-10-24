@@ -2,7 +2,7 @@ from google.adk.agents import LlmAgent
 from pydantic import BaseModel
 from pydantic import Field
 
-from multi_tool_agent.core.llm import isolated_llm_agent
+from multi_tool_agent.core.llm import llm_agent
 from multi_tool_agent.core.models import ResearchStep
 from multi_tool_agent.utils.config import config
 from multi_tool_agent.utils.utils import today
@@ -43,21 +43,16 @@ system_prompt = f"""You are a Research Planning Agent that turns a research ques
 - Consider the current date when the question is about recent or latest developments"""
 
 
-def plan_agent(*, question: str) -> LlmAgent:
-    """
-    Create the agent that plans the research steps for a question.
+def plan_input(question: str) -> str:
+    """Build the planner input for a research question."""
+    return f'Current date: {today()}\nResearch question: {question}'
 
-    Args:
-        question: The research question
 
-    Returns:
-        The configured LlmAgent
-    """
-    return isolated_llm_agent(
+def plan_agent() -> LlmAgent:
+    """Create the agent that plans the research steps for a question (input: `plan_input`)."""
+    return llm_agent(
         name='PlanAgent',
         model=config.model,
         instruction=system_prompt,
-        build_input=lambda _: f'Current date: {today()}\nResearch question: {question}',
         output_schema=ResearchPlan,
-        output_key='research_plan',
     )

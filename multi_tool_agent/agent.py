@@ -1,25 +1,27 @@
-from collections.abc import AsyncGenerator
-
-from google.adk.agents import BaseAgent
-from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event
-from google.adk.events import EventActions
+from google.adk import Event
+from google.adk import Workflow
+from google.adk.agents.context import Context
+from google.adk.workflow import node
+from google.genai import types
 
 from multi_tool_agent.core.agents.main.answer import answer_agent
+from multi_tool_agent.core.agents.main.answer import answer_input
 from multi_tool_agent.core.agents.main.answer import build_registry
 from multi_tool_agent.core.agents.main.answer import format_references
+from multi_tool_agent.core.agents.main.classify import ClassificationResult
 from multi_tool_agent.core.agents.main.classify import classify_agent
+from multi_tool_agent.core.agents.main.classify import classify_input
 from multi_tool_agent.core.agents.main.plan import plan_agent
+from multi_tool_agent.core.agents.main.plan import plan_input
 from multi_tool_agent.core.agents.main.plan import ResearchPlan
 from multi_tool_agent.core.agents.main.reflect import reflect_agent
+from multi_tool_agent.core.agents.main.reflect import reflect_input
 from multi_tool_agent.core.agents.main.reflect import Reflection
-from multi_tool_agent.core.agents.main.research import collect_results
-from multi_tool_agent.core.agents.main.research import ResearchAgent
-from multi_tool_agent.core.agents.research.base import message
+from multi_tool_agent.core.agents.main.research import run_research_round
 from multi_tool_agent.core.models import ResearchStep
+from multi_tool_agent.core.models import StepResult
 from multi_tool_agent.utils.config import config
 from multi_tool_agent.utils.logger import get_logger
-from multi_tool_agent.utils.utils import valid_uuid
 
 logger = get_logger(__name__)
 
@@ -32,115 +34,106 @@ def _format_steps(steps: list[ResearchStep]) -> str:
     return '\n'.join(f'- [{step.tool}] `{step.query}` — {step.goal}' for step in steps)
 
 
-class RootAgent(BaseAgent):
-    """Root agent that coordinates the entire research workflow."""
+def _format_result(result: StepResult) -> str:
+    found = sum(len(findings) for findings in result.findings.values())
+    details = ', '.join(
+        [
+            *result.notes,
+            f'{found} findings from {len(result.findings)} sources',
+        ],
+    )
+    summary = f'- [{result.step.tool}] `{result.step.query}`: {details}'
+    return summary + (f' (error: {result.error})' if result.error else '')
 
-    def _remember(self, context: InvocationContext, role: str, text: str) -> EventActions:
-        """Append a message to the conversation kept in the state, which the classifier reads."""
-        conversation = list(context.session.state.get('conversation', []))
-        conversation.append({'role': role, 'text': text})
-        return EventActions(state_delta={'conversation': conversation})
 
-    async def _run_async_impl(self, context: InvocationContext) -> AsyncGenerator[Event, None]:
-        """
-        Execute the complete research workflow.
+@node(name='research', rerun_on_resume=True)
+async def research(ctx: Context, node_input: types.Content):
+    """
+    Execute the complete research workflow for the latest user message.
 
-        Args:
-            context: Invocation context containing user query and session state
+    Classify the message, plan the research, run rounds of parallel research steps until the reflection agent
+    is satisfied (or the round limit is reached), then write the answer with its references.
 
-        Yields:
-            Events from each stage of the research process
-        """
-        logger.info('Starting research workflow')
-        parts = context.user_content.parts if context.user_content else None
-        user_message = ''.join(part.text or '' for part in parts or [])
-        yield Event(author=self.name, actions=self._remember(context, 'user', user_message))
+    Args:
+        ctx: Node context
+        node_input: The user message
 
-        # Classify the user request
-        logger.debug('Classifying user request')
-        async for event in classify_agent().run_async(context):
-            yield event
+    Yields:
+        Progress messages, the answer and the references
+    """
+    logger.info('Starting research workflow')
+    user_message = ''.join(part.text or '' for part in node_input.parts or [])
+    # The conversation is kept in the state so the classifier can interpret follow-ups and clarifications
+    conversation = [
+        *ctx.state.get(
+            'conversation', [],
+        ), {'role': 'user', 'text': user_message},
+    ]
+    ctx.state['conversation'] = conversation
 
-        classification = context.session.state['classification']
-        logger.info(f'Classification result: {classification["type"]}')
+    classification = ClassificationResult.model_validate(
+        await ctx.run_node(classify_agent(), node_input=classify_input(conversation)),
+    )
+    logger.info(f'Classification result: {classification.type}')
+    if classification.type != 'valid' or not classification.user_intent:
+        reply = classification.next_message or 'Could you tell me more about what you want to research?'
+        ctx.state['conversation'] = [
+            *conversation,
+            {'role': 'assistant', 'text': reply},
+        ]
+        yield Event(message=reply)
+        return
 
-        if classification['type'] != 'valid' or not classification.get('user_intent'):
-            logger.info(
-                'Request classified as invalid, returning classification message',
-            )
-            reply = classification.get(
-                'next_message',
-            ) or 'Could you tell me more about what you want to research?'
-            yield message(self.name, reply, actions=self._remember(context, 'assistant', reply))
-            return
+    question = classification.user_intent
+    plan = ResearchPlan.model_validate(await ctx.run_node(plan_agent(), node_input=plan_input(question)))
+    steps = plan.steps[:config.max_steps]
 
-        question = classification['user_intent']
-        run_id = valid_uuid()
+    # Research loop: execute the steps, then let the reflection agent decide whether to dig deeper
+    results: list[StepResult] = []
+    executed: set[tuple[str, str]] = set()
+    for iteration in range(1, config.max_iterations + 1):
+        steps = [
+            step for step in steps if _step_signature(
+                step,
+            ) not in executed
+        ]
+        if not steps:
+            break
+        executed.update(_step_signature(step) for step in steps)
 
-        # Generate research plan
-        logger.info('Generating research plan')
-        async for event in plan_agent(question=question).run_async(context):
-            yield event
-        steps = ResearchPlan.model_validate(
-            context.session.state['research_plan'],
-        ).steps[:config.max_steps]
+        logger.info(f'Research round {iteration}')
+        yield Event(message=f'Research round {iteration}:\n{_format_steps(steps)}')
+        round_results = await run_research_round(ctx, steps, question)
+        results += round_results
+        yield Event(message='\n'.join(_format_result(result) for result in round_results))
 
-        # Research loop: execute the steps, then let the reflection agent decide whether to dig deeper
-        executed: set[tuple[str, str]] = set()
-        for iteration in range(1, config.max_iterations + 1):
-            steps = [
-                step for step in steps if _step_signature(
-                    step,
-                ) not in executed
-            ]
-            if not steps:
-                break
-            executed.update(_step_signature(step) for step in steps)
-
-            logger.info(f'Research round {iteration} with run_id: {run_id}')
-            yield message(self.name, f'Research round {iteration}:\n{_format_steps(steps)}')
-            research_agent = ResearchAgent(
-                name=f'ResearchAgent_{iteration}', run_id=run_id, steps=steps, question=question,
-            )
-            async for event in research_agent.run_async(context):
-                yield event
-
-            if iteration == config.max_iterations:
-                break
-            reflector = reflect_agent(
-                question=question, results=collect_results(
-                    context.session.state, run_id,
-                ),
-            )
-            async for event in reflector.run_async(context):
-                yield event
-            reflection = Reflection.model_validate(
-                context.session.state['reflection'],
-            )
-            if reflection.sufficient:
-                break
-            logger.info(f'Research incomplete: {reflection.missing}')
-            steps = reflection.follow_up_steps[:config.max_steps]
-
-        # Generate final answer
-        logger.info('Generating final answer')
-        registry = build_registry(
-            collect_results(context.session.state, run_id),
+        if iteration == config.max_iterations:
+            break
+        reflection = Reflection.model_validate(
+            await ctx.run_node(reflect_agent(), node_input=reflect_input(question, results)),
         )
-        async for event in answer_agent(user_message=user_message, question=question, registry=registry).run_async(context):
-            yield event
+        if reflection.sufficient:
+            break
+        logger.info(f'Research incomplete: {reflection.missing}')
+        steps = reflection.follow_up_steps[:config.max_steps]
 
-        answer = context.session.state.get('answer', '')
-        references = format_references(answer, registry)
-        yield message(
-            self.name,
-            references or 'No sources cited.',
-            actions=self._remember(context, 'assistant', answer),
-        )
-        logger.info('Research workflow completed successfully')
+    logger.info('Generating final answer')
+    registry = build_registry(results)
+    answer = await ctx.run_node(answer_agent(), node_input=answer_input(user_message, question, registry)) or ''
+    references = format_references(answer, registry)
+
+    ctx.state['conversation'] = [
+        *conversation,
+        {'role': 'assistant', 'text': answer},
+    ]
+    # The last run, for inspection and for the smoke test
+    ctx.state['last_run'] = {
+        'question': question,
+        'steps': [result.model_dump() for result in results],
+        'answer': answer,
+    }
+    yield Event(message=references or 'No sources cited.')
+    logger.info('Research workflow completed successfully')
 
 
-root_agent = RootAgent(
-    name='root',
-    description='Root Agent',
-)
+root_agent = Workflow(name='root', edges=[('START', research)])

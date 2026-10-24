@@ -2,7 +2,7 @@ import re
 
 from google.adk.agents import LlmAgent
 
-from multi_tool_agent.core.llm import isolated_llm_agent
+from multi_tool_agent.core.llm import llm_agent
 from multi_tool_agent.core.models import Finding
 from multi_tool_agent.core.models import Source
 from multi_tool_agent.core.models import StepResult
@@ -57,9 +57,9 @@ def _describe(source: Source) -> str:
     return f'{authors}"{source.title}"{published} — {source.url}'
 
 
-def answer_agent(*, user_message: str, question: str, registry: list[RegistryEntry]) -> LlmAgent:
+def answer_input(user_message: str, question: str, registry: list[RegistryEntry]) -> str:
     """
-    Create the agent that writes the final answer.
+    Build the answer input: the question and the numbered sources with their findings.
 
     Args:
         user_message: The latest user message, which sets the answer language
@@ -67,7 +67,7 @@ def answer_agent(*, user_message: str, question: str, registry: list[RegistryEnt
         registry: Sources with their findings, numbered from 1
 
     Returns:
-        The configured LlmAgent
+        The answer input
     """
     lines = [
         f'Current date: {today()}',
@@ -83,14 +83,15 @@ def answer_agent(*, user_message: str, question: str, registry: list[RegistryEnt
             lines.append(f'    Evidence: "{finding.evidence}"')
     if not registry:
         lines.append('(no findings)')
-    user_input = '\n'.join(lines)
+    return '\n'.join(lines)
 
-    return isolated_llm_agent(
+
+def answer_agent() -> LlmAgent:
+    """Create the agent that writes the final answer (input: `answer_input`)."""
+    return llm_agent(
         name='AnswerAgent',
         model=config.model,
         instruction=system_prompt,
-        build_input=lambda _: user_input,
-        output_key='answer',
     )
 
 

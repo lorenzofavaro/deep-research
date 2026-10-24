@@ -2,7 +2,7 @@
 
 ## Overview
 
-A **multi-agent AI research assistant** powered by [Gemini](https://ai.google.dev/gemini-api/docs/models), built with [Google ADK](https://github.com/google/adk-python). It plans the research, reads academic papers and web pages, digs deeper where the findings are incomplete, and answers with citations to the sources it actually read.
+A **multi-agent AI research assistant** powered by [Gemini](https://ai.google.dev/gemini-api/docs/models), built with [Google ADK](https://github.com/google/adk-python) 2.x as a graph workflow. It plans the research, reads academic papers and web pages, digs deeper where the findings are incomplete, and answers with citations to the sources it actually read.
 
 ## Workflow
 
@@ -29,7 +29,7 @@ flowchart TD
 4. **Reflection** - Reviews the findings and, if important gaps remain, plans follow-up steps for another round (2 rounds by default)
 5. **Answer Synthesis** - Writes the answer from the findings only, citing sources as `[n]`; the references section is generated from the source metadata, listing only the sources actually cited
 
-A failing source or step (network error, rate limit, model error) is logged and skipped: the run continues with the rest.
+A failing source or step (network error, rate limit, model error) is logged and skipped: the run continues with the rest. `MODEL` and `FAST_MODEL` accept comma-separated chains of models: when a model fails with a quota, rate-limit or server error, the next one in the chain takes over (by default `gemini-flash-latest` and `gemini-flash-lite-latest` back each other up).
 
 ## Getting Started
 
@@ -40,7 +40,7 @@ A failing source or step (network error, rate limit, model error) is logged and 
   - `Google AI API key` (for Gemini models)
   - `Tavily API key` (for web search)
 
-A research run makes roughly 15-20 model requests (more with a second round): about 5 go to `MODEL` (classification, planning, reflection, answer) and the rest to `FAST_MODEL` (paper selection and extraction, `gemini-flash-lite-latest` by default). The Gemini free tier has a small daily quota per model, so it allows only a few runs per day; use a paid key for regular use.
+A research run makes roughly 15-20 model requests (more with a second round): about 5 go to `MODEL` (classification, planning, reflection, answer) and the rest to `FAST_MODEL` (paper selection and extraction). The Gemini free tier has a small daily quota per model, so it allows only a few runs per day; use a paid key for regular use.
 
 OpenAlex works without a key on a small daily budget shared by IP address; for regular use, get a free key at [openalex.org](https://openalex.org/settings/api) and set `OPENALEX_API_KEY`.
 
