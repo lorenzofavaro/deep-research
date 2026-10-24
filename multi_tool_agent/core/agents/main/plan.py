@@ -1,70 +1,63 @@
-from typing import Literal
-from typing import Optional
-
 from google.adk.agents import LlmAgent
-from google.adk.planners.plan_re_act_planner import PlanReActPlanner
 from pydantic import BaseModel
 from pydantic import Field
 
-
-class ClassificationResult(BaseModel):
-    """Result from user request classification."""
-    type: Literal[
-        'valid', 'general',
-        'need-more-info',
-    ] = Field(description='Classification result')
-    user_intent: Optional[str] = Field(
-        description="Precise user intent for 'valid' classifications", default=None,
-    )
-    next_message: Optional[str] = Field(
-        description="Next message to send to user for 'general' or 'need-more-info' classifications", default=None,
-    )
-
-
-class ResearchStep(BaseModel):
-    """Individual step in a research plan."""
-    action: Literal['arxiv_search', 'web_search'] = Field(
-        description='Type of action to perform',
-    )
-    query: str = Field(
-        description='Search query and description of what this step should accomplish',
-    )
+from multi_tool_agent.core.llm import isolated_llm_agent
+from multi_tool_agent.core.models import ResearchStep
+from multi_tool_agent.utils.config import config
+from multi_tool_agent.utils.utils import today
 
 
 class ResearchPlan(BaseModel):
-    """Complete research plan with sequential steps."""
+    """Complete research plan, whose steps run in parallel."""
     steps: list[ResearchStep] = Field(
-        description='List of research steps to execute',
+        description='List of independent research steps to execute',
     )
 
 
-GEMINI_MODEL = 'gemini-2.0-flash'
+# Shared with the reflection agent, which plans the follow-up steps
+TOOLS_GUIDE = """**Available Tools:**
+1. **arxiv** - Academic papers: theoretical foundations, methods, benchmarks, established research. The full text of \
+the most relevant papers is read.
+   The query MUST use arXiv API syntax, because plain sentences match almost everything:
+   - fields: `ti:` (title), `abs:` (abstract), `au:` (author), `cat:` (category, e.g. cat:cs.CL), `all:` (any field)
+   - phrases in double quotes, combined with AND / OR / ANDNOT and parentheses
+   - example: `abs:"retrieval augmented generation" AND (abs:evaluation OR abs:benchmark)`
+   - keep it to 2-3 key concepts: over-constrained queries return nothing
+2. **web** - Recent developments, news, industry applications, products, current facts. The query is a concise \
+search engine query (keywords, no instructions)."""
 
-system_prompt = """You are a Research Planning Agent that creates step-by-step research plans from the user_intent.
+system_prompt = f"""You are a Research Planning Agent that turns a research question into a plan of search steps.
 
-**Available Tools:**
-1. **ArXiv Search** - Academic papers, theoretical foundations, established research
-2. **Web Search** - Recent developments, industry applications, current trends
+{TOOLS_GUIDE}
 
 **Process:**
-1. Start from the provided user_intent
-2. Break it into key research components
-3. Create targeted search queries using appropriate tools
-4. Sequence steps logically to build comprehensive understanding
+1. Break the question into its key components
+2. For each component pick the tool that is most likely to contain the answer
+3. Write a targeted query and state the goal of the step
 
 **Requirements:**
-- Maximum 3 steps
-- Each step must directly address the user's intent
-- Build knowledge progressively from foundations to current applications
-"""
+- At most {config.max_steps} steps; use fewer when the question is narrow (e.g. a single current fact needs one web step)
+- Steps run in parallel, so they must be independent and must not overlap
+- Use arxiv only when academic literature is relevant; news and current facts need web
+- Consider the current date when the question is about recent or latest developments"""
 
-plan_agent = LlmAgent(
-    name='PlanAgent',
-    model=GEMINI_MODEL,
-    instruction=system_prompt,
-    planner=PlanReActPlanner(),
-    description='Plan a list of steps to gather all the information needed to answer the user query',
-    input_schema=ClassificationResult,
-    output_schema=ResearchPlan,
-    output_key='research_plan',
-)
+
+def plan_agent(*, question: str) -> LlmAgent:
+    """
+    Create the agent that plans the research steps for a question.
+
+    Args:
+        question: The research question
+
+    Returns:
+        The configured LlmAgent
+    """
+    return isolated_llm_agent(
+        name='PlanAgent',
+        model=config.model,
+        instruction=system_prompt,
+        build_input=lambda _: f'Current date: {today()}\nResearch question: {question}',
+        output_schema=ResearchPlan,
+        output_key='research_plan',
+    )
