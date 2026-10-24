@@ -62,6 +62,35 @@ def _strip_version(arxiv_id: str) -> str:
     return re.sub(r'v\d+$', '', arxiv_id)
 
 
+async def _query_api(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Call the arXiv API, respecting its rate limit, and parse the returned entries."""
+    global _last_api_call
+    async with _api_lock:
+        wait = _last_api_call + API_INTERVAL - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        try:
+            resp = await _get(API_URL, params=params)
+        finally:
+            _last_api_call = time.monotonic()
+
+    papers = []
+    for entry in feedparser.parse(resp.text).entries:
+        # Unknown IDs come back as an error entry
+        if '/abs/' not in str(entry.get('id', '')):
+            continue
+        arxiv_id = _strip_version(str(entry.id).split('/abs/')[-1])
+        papers.append({
+            'id': arxiv_id,
+            'title': ' '.join(str(entry.title).split()),
+            'abstract': ' '.join(str(entry.summary).split()),
+            'authors': [author.name for author in entry.get('authors', [])],
+            'published': str(entry.get('published', ''))[:10],
+            'url': f'https://arxiv.org/abs/{arxiv_id}',
+        })
+    return papers
+
+
 async def search_arxiv(query: str, max_results: int = 30) -> list[dict[str, Any]]:
     """
     Search for papers on arXiv using the arXiv API.
@@ -73,35 +102,27 @@ async def search_arxiv(query: str, max_results: int = 30) -> list[dict[str, Any]
     Returns:
         List of dictionaries with id, title, abstract, authors, published date and url
     """
-    global _last_api_call
     logger.debug(
         f'Searching ArXiv with query: "{query}", max_results: {max_results}',
     )
-
-    async with _api_lock:
-        wait = _last_api_call + API_INTERVAL - time.monotonic()
-        if wait > 0:
-            await asyncio.sleep(wait)
-        try:
-            resp = await _get(API_URL, params={'search_query': query, 'start': 0, 'max_results': max_results})
-        finally:
-            _last_api_call = time.monotonic()
-
-    feed = feedparser.parse(resp.text)
-    papers = []
-    for entry in feed.entries:
-        arxiv_id = _strip_version(str(entry.id).split('/abs/')[-1])
-        papers.append({
-            'id': arxiv_id,
-            'title': ' '.join(str(entry.title).split()),
-            'abstract': ' '.join(str(entry.summary).split()),
-            'authors': [author.name for author in entry.get('authors', [])],
-            'published': str(entry.get('published', ''))[:10],
-            'url': f'https://arxiv.org/abs/{arxiv_id}',
-        })
-
+    papers = await _query_api({'search_query': query, 'start': 0, 'max_results': max_results})
     logger.info(f'Found {len(papers)} papers from ArXiv search')
     return papers
+
+
+async def get_arxiv_papers(arxiv_ids: list[str]) -> list[dict[str, Any]]:
+    """
+    Fetch the arXiv metadata of papers by ID.
+
+    Args:
+        arxiv_ids: arXiv IDs without version
+
+    Returns:
+        Papers in the same format as `search_arxiv`; unknown IDs are left out
+    """
+    if not arxiv_ids:
+        return []
+    return await _query_api({'id_list': ','.join(arxiv_ids), 'max_results': len(arxiv_ids)})
 
 
 def relax_query(query: str) -> str:

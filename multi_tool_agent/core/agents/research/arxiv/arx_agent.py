@@ -12,6 +12,7 @@ from multi_tool_agent.core.agents.research.base import ResearchStepAgent
 from multi_tool_agent.core.models import Source
 from multi_tool_agent.core.models import StepResult
 from multi_tool_agent.core.tools.arxiv import get_arxiv_paper_text
+from multi_tool_agent.core.tools.arxiv import get_arxiv_papers
 from multi_tool_agent.core.tools.arxiv import relax_query
 from multi_tool_agent.core.tools.arxiv import search_arxiv
 from multi_tool_agent.core.tools.openalex import get_citation_counts
@@ -105,7 +106,7 @@ class ArxivAgent(ResearchStepAgent):
         """
         Merge the arXiv results with the most cited papers from OpenAlex, and add citation counts to all of them.
 
-        arXiv metadata wins for papers found by both, since it carries the preprint date.
+        Metadata always comes from arXiv, which is authoritative and carries the preprint date.
 
         Args:
             candidates: Papers from the arXiv search
@@ -115,10 +116,26 @@ class ArxivAgent(ResearchStepAgent):
             The merged candidates, each with a `citations` count when OpenAlex knows the paper
         """
         merged = {paper['id']: paper for paper in candidates}
+        # OpenAlex can attach the title of another work to an arXiv ID: take the metadata of the papers only
+        # OpenAlex found from arXiv itself, and drop those arXiv does not confirm
+        cited_only = [
+            paper['id']
+            for paper in cited if paper['id'] not in merged
+        ]
+        try:
+            confirmed = {paper['id']: paper for paper in await get_arxiv_papers(cited_only)}
+        except Exception as e:
+            logger.warning(
+                f'Could not confirm OpenAlex papers on arXiv, skipping them: {e}',
+            )
+            confirmed = {}
         for paper in cited:
-            merged.setdefault(paper['id'], paper)[
-                'citations'
-            ] = paper['citations']
+            if paper['id'] in merged:
+                merged[paper['id']]['citations'] = paper['citations']
+            elif paper['id'] in confirmed:
+                merged[paper['id']] = {
+                    **confirmed[paper['id']], 'citations': paper['citations'],
+                }
         missing = [
             paper_id for paper_id,
             paper in merged.items() if 'citations' not in paper
