@@ -18,7 +18,7 @@ from multi_tool_agent.core.agents.main.reflect import reflect_agent
 from multi_tool_agent.core.agents.main.reflect import reflect_input
 from multi_tool_agent.core.agents.main.reflect import Reflection
 from multi_tool_agent.core.agents.main.research import run_research_round
-from multi_tool_agent.core.models import ResearchStep
+from multi_tool_agent.core.models import ResearchTask
 from multi_tool_agent.core.models import StepResult
 from multi_tool_agent.utils.config import config
 from multi_tool_agent.utils.logger import get_logger
@@ -26,12 +26,12 @@ from multi_tool_agent.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def _step_signature(step: ResearchStep) -> tuple[str, str]:
-    return step.tool, ' '.join(step.query.lower().split())
+def _task_signature(task: ResearchTask) -> str:
+    return ' '.join(task.objective.lower().split())
 
 
-def _format_steps(steps: list[ResearchStep]) -> str:
-    return '\n'.join(f'- [{step.tool}] `{step.query}` — {step.goal}' for step in steps)
+def _format_tasks(tasks: list[ResearchTask]) -> str:
+    return '\n'.join(f'- [{task.lens}, {", ".join(task.sources)}] {task.objective}' for task in tasks)
 
 
 def _format_result(result: StepResult) -> str:
@@ -42,7 +42,7 @@ def _format_result(result: StepResult) -> str:
             f'{found} findings from {len(result.findings)} sources',
         ],
     )
-    summary = f'- [{result.step.tool}] `{result.step.query}`: {details}'
+    summary = f'- {result.step.objective}: {details}'
     return summary + (f' (error: {result.error})' if result.error else '')
 
 
@@ -51,7 +51,7 @@ async def research(ctx: Context, node_input: types.Content):
     """
     Execute the complete research workflow for the latest user message.
 
-    Classify the message, plan the research, run rounds of parallel research steps until the reflection agent
+    Classify the message, plan the research tasks, run rounds of parallel researchers until the reflection agent
     is satisfied (or the round limit is reached), then write the answer with its references.
 
     Args:
@@ -85,25 +85,28 @@ async def research(ctx: Context, node_input: types.Content):
         return
 
     question = classification.user_intent
-    plan = ResearchPlan.model_validate(await ctx.run_node(plan_agent(), node_input=plan_input(question)))
-    steps = plan.steps[:config.max_steps]
+    complexity = classification.complexity
+    plan = ResearchPlan.model_validate(
+        await ctx.run_node(plan_agent(), node_input=plan_input(question, complexity)),
+    )
+    tasks = plan.tasks[:config.max_steps]
 
-    # Research loop: execute the steps, then let the reflection agent decide whether to dig deeper
+    # Research loop: run the researchers, then let the reflection agent decide whether to dig deeper
     results: list[StepResult] = []
-    executed: set[tuple[str, str]] = set()
+    executed: set[str] = set()
     for iteration in range(1, config.max_iterations + 1):
-        steps = [
-            step for step in steps if _step_signature(
-                step,
+        tasks = [
+            task for task in tasks if _task_signature(
+                task,
             ) not in executed
         ]
-        if not steps:
+        if not tasks:
             break
-        executed.update(_step_signature(step) for step in steps)
+        executed.update(_task_signature(task) for task in tasks)
 
         logger.info(f'Research round {iteration}')
-        yield Event(message=f'Research round {iteration}:\n{_format_steps(steps)}')
-        round_results = await run_research_round(ctx, steps, question)
+        yield Event(message=f'Research round {iteration}:\n{_format_tasks(tasks)}')
+        round_results = await run_research_round(ctx, tasks, question, complexity)
         results += round_results
         yield Event(message='\n'.join(_format_result(result) for result in round_results))
 
@@ -115,7 +118,7 @@ async def research(ctx: Context, node_input: types.Content):
         if reflection.sufficient:
             break
         logger.info(f'Research incomplete: {reflection.missing}')
-        steps = reflection.follow_up_steps[:config.max_steps]
+        tasks = reflection.follow_up_tasks[:config.max_steps]
 
     logger.info('Generating final answer')
     registry = build_registry(results)

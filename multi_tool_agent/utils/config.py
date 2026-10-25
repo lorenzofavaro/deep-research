@@ -10,9 +10,8 @@ class Config:
 
     def __init__(self) -> None:
         """Initialize configuration with environment variables."""
-        # Models: `model` drives classification, planning, reflection and the final answer,
-        # `fast_model` the high-volume calls (paper selection and source extraction). Splitting them also spreads
-        # the load over two per-model quotas
+        # Models: `model` drives classification, planning, reflection and the final answer, `fast_model` the
+        # researchers, which make most of the calls. Splitting them also spreads the load over two per-model quotas
         # Each value can be a comma-separated chain: on a quota, rate-limit or server error the next model is used
         self.model = os.getenv(
             'MODEL', 'gemini-flash-latest,gemini-flash-lite-latest',
@@ -21,13 +20,14 @@ class Config:
             'FAST_MODEL', 'gemini-flash-lite-latest,gemini-flash-latest',
         )
 
-        # Research loop
+        # Research loop: researchers per round, rounds, search/read calls per researcher
         self.max_steps = _int_env('MAX_STEPS', 3)
         self.max_iterations = _int_env('MAX_ITERATIONS', 2)
+        self.researcher_tool_calls = _int_env('RESEARCHER_TOOL_CALLS', 10)
+        self.passages_per_read = _int_env('PASSAGES_PER_READ', 6)
 
         # ArXiv
         self.arxiv_candidates = _int_env('ARXIV_CANDIDATES', 30)
-        self.papers_per_step = _int_env('PAPERS_PER_STEP', 3)
         self.paper_max_chars = _int_env('PAPER_MAX_CHARS', 100_000)
         # OpenAlex: most cited papers of a topic and citation counts; works without a key on a shared daily budget
         self.cited_candidates = _int_env('CITED_CANDIDATES', 15)
