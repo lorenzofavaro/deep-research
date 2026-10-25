@@ -24,6 +24,11 @@ class ClassificationResult(BaseModel):
         description="For 'valid' requests: simple (a single fact or definition), moderate, or complex (comparisons, "
                     'broad topics, several sub-questions)',
     )
+    output: Literal['chat', 'report'] = Field(
+        default='chat',
+        description="For 'valid' requests: report when the user asks for a report, review, survey or in-depth "
+                    'analysis, chat for direct questions',
+    )
     next_message: Optional[str] = Field(
         description="Next message to send to user for 'general' or 'need-more-info' classifications", default=None,
     )
@@ -41,7 +46,7 @@ with defined topics/domains, and factual or news questions that need up-to-date 
 3. **general** - Messages that need no research (e.g., "2+2?", greetings, chit-chat, requests to write code)
 
 **Output Format:**
-- **valid**: Return classification + complexity + user_intent: the research question, rewritten so it is understandable on its own \
+- **valid**: Return classification + complexity + output + user_intent: the research question, rewritten so it is understandable on its own \
 (resolve references to earlier messages, include the clarifications the user gave)
 - **need-more-info**: Return classification + next_message (ask for clarification)
 - **general**: Return classification + next_message (politely decline and explain you only help with research)

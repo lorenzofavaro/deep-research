@@ -28,6 +28,8 @@ ROLES = {
     'You are a Research Agent': 'research',
     'Research Reflection Agent': 'reflect',
     'Synthesize the research findings': 'answer',
+    'Report Section Writer': 'section',
+    'Report Editor': 'frame',
 }
 
 PAPERS = [
@@ -153,6 +155,24 @@ DEFAULT_RESPONSES: dict[str, Any] = {
     'answer': 'SSMs scale linearly [1]. Transformers dominate [2]. Invented [9].',
 }
 SIMPLE = {**DEFAULT_RESPONSES['classify'], 'complexity': 'simple'}
+REPORT = {**DEFAULT_RESPONSES['classify'], 'output': 'report'}
+
+
+def section_writer(request: LlmRequest) -> dict:
+    """Write a section that cites the sources listed for it."""
+    text = request.contents[0].parts[0].text
+    title = text.split('Section: ')[1].split('\n')[0]
+    own = text.split('# Findings for this section')[
+        1
+    ].split('# Other findings')[0]
+    cited = re.findall(r'^\[(\d+)\]', own, re.MULTILINE)
+    return {'body': f'Body of {title} ' + ' '.join(f'[{n}]' for n in cited)}
+
+
+FRAME = {
+    'title': 'SSMs vs Transformers',
+    'introduction': 'In short, both matter [1].', 'conclusion': 'Open questions.',
+}
 
 
 class Script:
@@ -587,3 +607,64 @@ def test_failing_researcher_keeps_its_findings(script):
     [step] = state['last_run']['steps']
     assert step['error'] and step['findings']
     assert '[1] "Page One"' in references(events)
+
+
+def test_report_is_written_section_by_section(script):
+    calls = script(classify=REPORT, section=section_writer, frame=FRAME)
+    events, state = run('Write a report on SSMs vs transformers')
+
+    assert calls.count()['section'] == 2 and calls.count()[
+        'frame'
+    ] == 1 and calls.count()['answer'] == 0
+    inputs = {
+        text.split('Section: ')[1].split(
+            '\n',
+        )[0]: text for text in calls.inputs('section')
+    }
+    # Each writer gets the findings of its own section only
+    own = {
+        title: text.split('# Findings for this section')[1].split(
+            '# Other findings',
+        )[0] for title, text in inputs.items()
+    }
+    assert 'Claim from Paper One' in own['How SSMs work'] and 'Claim from Page One' not in own['How SSMs work']
+    assert 'Claim from Page One' in own['Current landscape'] and 'Claim from Paper One' not in own['Current landscape']
+
+    report = state['last_run']['answer']
+    assert state['last_run']['output'] == 'report'
+    assert report.startswith(
+        '# SSMs vs Transformers\n\nIn short, both matter [1].',
+    )
+    assert report.index('## How SSMs work') < report.index(
+        '## Current landscape',
+    ) < report.index('## Conclusion')
+    [frame_input] = calls.inputs('frame')
+    assert 'Body of How SSMs work' in frame_input and 'Body of Current landscape' in frame_input
+    # The report is shown, then its references
+    assert events[-2] == ('root', report)
+    assert '[1]' in references(events)
+
+
+def test_output_mode_overrides_the_classifier(script, monkeypatch):
+    monkeypatch.setattr(config, 'output_mode', 'chat')
+    calls = script(classify=REPORT)
+    run('Write a report on SSMs vs transformers')
+    assert calls.count()['answer'] == 1 and calls.count()['section'] == 0
+
+    monkeypatch.setattr(config, 'output_mode', 'report')
+    calls = script(section=section_writer, frame=FRAME)
+    run('How do SSMs compare to transformers?')
+    assert calls.count()['section'] == 2 and calls.count()['answer'] == 0
+
+
+def test_a_failing_section_does_not_break_the_report(script):
+    def flaky_writer(request):
+        if 'Section: How SSMs work' in request.contents[0].parts[0].text:
+            raise RuntimeError('model crashed')
+        return section_writer(request)
+
+    script(classify=REPORT, section=flaky_writer, frame=FRAME)
+    _, state = run('Write a report on SSMs vs transformers')
+
+    report = state['last_run']['answer']
+    assert '## Current landscape' in report and '## How SSMs work' not in report

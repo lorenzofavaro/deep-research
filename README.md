@@ -18,7 +18,11 @@ flowchart TD
     end
     S --> F{Reflect: are all sections and constraints covered?}
     F -- no, follow-up tasks --> S
-    F -- yes / round limit --> X[Answer with numbered citations + references]
+    F -- yes / round limit --> M{Output}
+    M -- chat --> X[Direct answer]
+    M -- report --> W[Sections written in parallel from their own evidence → title, introduction, conclusion]
+    X --> REF[Numbered citations + references]
+    W --> REF
 ```
 
 1. **Classification** - Decides whether the latest message is a research question (including factual and news questions), needs clarification, or is out of scope, and estimates its complexity. It reads the previous turns, so follow-ups and clarifications are turned into a self-contained question
@@ -33,7 +37,9 @@ flowchart TD
 
    Raw source text stays with the researcher: it returns only its findings and a short brief. Once the budget is exhausted the search tools are removed, so the researcher wraps up
 5. **Coverage check** - Reviews the findings per section against the outline and the quality constraints and, if important gaps remain, delegates follow-up tasks for another round (2 rounds by default); it can also revise the outline
-6. **Answer Synthesis** - Writes the answer from the findings only, citing sources as `[n]`; the references section is generated from the source metadata, listing only the sources actually cited
+6. **Answer Synthesis** - Writes the answer from the findings only, citing sources as `[n]`; the references section is generated from the source metadata, listing only the sources actually cited. Two formats, chosen by the classifier (or forced with `OUTPUT_MODE=chat|report`):
+   - **chat**: a direct answer, for questions
+   - **report**: for requests of a report, review or in-depth analysis, each outline section is written in parallel from the findings tagged for it (plus the unassigned ones), then an editor adds the title, the executive summary and the conclusion
 
 A failing source or step (network error, rate limit, model error) is logged and skipped: the run continues with the rest. `MODEL` and `FAST_MODEL` accept comma-separated chains of models: when a model fails with a quota, rate-limit or server error, the next one in the chain takes over (by default `gemini-flash-latest` and `gemini-flash-lite-latest` back each other up).
 

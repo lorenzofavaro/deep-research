@@ -10,9 +10,11 @@ from google.genai.errors import ClientError
 from multi_tool_agent.core import llm
 from multi_tool_agent.core.agents.main.answer import build_registry
 from multi_tool_agent.core.agents.main.answer import format_references
+from multi_tool_agent.core.agents.main.report import section_input
 from multi_tool_agent.core.llm import build_model
 from multi_tool_agent.core.models import Finding
 from multi_tool_agent.core.models import ResearchTask
+from multi_tool_agent.core.models import Section
 from multi_tool_agent.core.models import Source
 from multi_tool_agent.core.models import StepResult
 from multi_tool_agent.core.tools import papers
@@ -75,6 +77,22 @@ def test_registry_deduplicates_sources_and_claims():
     registry = build_registry(results)
     assert [source.key for source, _ in registry] == ['a', 'b']
     assert [finding.claim for finding in registry[0][1]] == ['c1', 'c2']
+
+
+def test_registry_keeps_the_section_of_a_duplicate_claim():
+    scout = StepResult(
+        step=STEP, sources=[_source('a')], findings={
+            'a': [Finding(claim='c', evidence='e')],
+        },
+    )
+    tagged = StepResult(
+        step=STEP, sources=[_source('a')], findings={'a': [Finding(claim='c', evidence='e', section='s1')]},
+    )
+    [(_, findings)] = build_registry([scout, tagged])
+    assert [
+        (finding.claim, finding.section)
+        for finding in findings
+    ] == [('c', 's1')]
 
 
 def test_references_list_only_valid_cited_sources():
@@ -256,3 +274,24 @@ def test_papers_found_only_by_openalex_use_arxiv_metadata(monkeypatch):
         ('2401.00001', 'Other', 3),
         ('2106.09685', 'LoRA: Low-Rank Adaptation of Large Language Models', 500),
     ]
+
+
+def test_section_writer_gets_its_findings_and_the_unassigned_ones():
+    registry = [
+        (_source('a'), [Finding(claim='own', evidence='e', section='s1')]),
+        (
+            _source('b'), [
+                Finding(claim='other section', evidence='e', section='s2'),
+            ],
+        ),
+        (_source('c'), [Finding(claim='unassigned', evidence='e')]),
+    ]
+    section = Section(id='s1', title='T', questions=['Q?'])
+    text = section_input('msg', 'question', section, registry, {'s1', 's2'})
+    own, shared = text.split('# Findings for this section')[
+        1
+    ].split('# Other findings')
+    # Citation numbers stay the global ones
+    assert '[1] "Title a"' in own and 'own' in own
+    assert 'other section' not in text
+    assert '[3] "Title c"' in shared and 'unassigned' in shared

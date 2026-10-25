@@ -17,6 +17,7 @@ from multi_tool_agent.core.agents.main.plan import ResearchPlan
 from multi_tool_agent.core.agents.main.reflect import reflect_agent
 from multi_tool_agent.core.agents.main.reflect import reflect_input
 from multi_tool_agent.core.agents.main.reflect import Reflection
+from multi_tool_agent.core.agents.main.report import write_report
 from multi_tool_agent.core.agents.main.research import run_research_round
 from multi_tool_agent.core.models import ResearchTask
 from multi_tool_agent.core.models import StepResult
@@ -155,9 +156,16 @@ async def research(ctx: Context, node_input: types.Content):
         logger.info(f'Research incomplete: {reflection.missing}')
         tasks = reflection.follow_up_tasks[:config.max_steps]
 
-    logger.info('Generating final answer')
     registry = build_registry(results)
-    answer = await ctx.run_node(answer_agent(), node_input=answer_input(user_message, question, registry)) or ''
+    output = classification.output if config.output_mode == 'auto' else config.output_mode
+    logger.info(f'Generating final answer ({output})')
+    if output == 'report' and plan.outline:
+        yield Event(message=f'Writing the report: {len(plan.outline)} sections')
+        answer = await write_report(ctx, user_message, question, plan.outline, registry)
+        # Unlike the chat answer, the report is assembled here and has not been shown yet
+        yield Event(message=answer)
+    else:
+        answer = await ctx.run_node(answer_agent(), node_input=answer_input(user_message, question, registry)) or ''
     references = format_references(answer, registry)
 
     ctx.state['conversation'] = [
@@ -170,6 +178,7 @@ async def research(ctx: Context, node_input: types.Content):
         'plan': plan.model_dump(),
         'steps': [result.model_dump() for result in results],
         'answer': answer,
+        'output': output,
     }
     yield Event(message=references or 'No sources cited.')
     logger.info('Research workflow completed successfully')
