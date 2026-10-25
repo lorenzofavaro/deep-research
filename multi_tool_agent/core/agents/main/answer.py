@@ -1,6 +1,8 @@
 import re
 
 from google.adk.agents import LlmAgent
+from pydantic import BaseModel
+from pydantic import Field
 
 from multi_tool_agent.core.llm import llm_agent
 from multi_tool_agent.core.models import Finding
@@ -93,12 +95,20 @@ def answer_input(user_message: str, question: str, registry: list[RegistryEntry]
     return '\n'.join(lines)
 
 
+class AnswerDraft(BaseModel):
+    """The drafted answer, shown once verified."""
+    answer: str = Field(
+        description='The answer in Markdown, with [n] citations',
+    )
+
+
 def answer_agent() -> LlmAgent:
-    """Create the agent that writes the final answer (input: `answer_input`)."""
+    """Create the agent that writes the chat answer (input: `answer_input`)."""
     return llm_agent(
         name='AnswerAgent',
         model=config.model,
         instruction=system_prompt,
+        output_schema=AnswerDraft,
     )
 
 

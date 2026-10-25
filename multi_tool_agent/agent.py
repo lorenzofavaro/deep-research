@@ -6,6 +6,7 @@ from google.genai import types
 
 from multi_tool_agent.core.agents.main.answer import answer_agent
 from multi_tool_agent.core.agents.main.answer import answer_input
+from multi_tool_agent.core.agents.main.answer import AnswerDraft
 from multi_tool_agent.core.agents.main.answer import build_registry
 from multi_tool_agent.core.agents.main.answer import format_references
 from multi_tool_agent.core.agents.main.classify import ClassificationResult
@@ -19,6 +20,7 @@ from multi_tool_agent.core.agents.main.reflect import reflect_input
 from multi_tool_agent.core.agents.main.reflect import Reflection
 from multi_tool_agent.core.agents.main.report import write_report
 from multi_tool_agent.core.agents.main.research import run_research_round
+from multi_tool_agent.core.agents.main.verify import verify_answer
 from multi_tool_agent.core.models import ResearchTask
 from multi_tool_agent.core.models import StepResult
 from multi_tool_agent.utils.config import config
@@ -162,10 +164,16 @@ async def research(ctx: Context, node_input: types.Content):
     if output == 'report' and plan.outline:
         yield Event(message=f'Writing the report: {len(plan.outline)} sections')
         answer = await write_report(ctx, user_message, question, plan.outline, registry)
-        # Unlike the chat answer, the report is assembled here and has not been shown yet
-        yield Event(message=answer)
     else:
-        answer = await ctx.run_node(answer_agent(), node_input=answer_input(user_message, question, registry)) or ''
+        draft = await ctx.run_node(answer_agent(), node_input=answer_input(user_message, question, registry))
+        answer = AnswerDraft.model_validate(draft).answer if draft else ''
+
+    verification = None
+    if config.verify and answer:
+        yield Event(message='Verifying the citations')
+        answer, verification = await verify_answer(ctx, answer, registry)
+        logger.info(f'Verification: {verification}')
+    yield Event(message=answer)
     references = format_references(answer, registry)
 
     ctx.state['conversation'] = [
@@ -179,6 +187,8 @@ async def research(ctx: Context, node_input: types.Content):
         'steps': [result.model_dump() for result in results],
         'answer': answer,
         'output': output,
+        'verification': verification.model_dump() | {'supported_rate': verification.supported_rate}
+        if verification else None,
     }
     yield Event(message=references or 'No sources cited.')
     logger.info('Research workflow completed successfully')

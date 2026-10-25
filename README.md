@@ -21,8 +21,9 @@ flowchart TD
     F -- yes / round limit --> M{Output}
     M -- chat --> X[Direct answer]
     M -- report --> W[Sections written in parallel from their own evidence → title, introduction, conclusion]
-    X --> REF[Numbered citations + references]
-    W --> REF
+    X --> V[Verify each cited claim against its sources: rewrite or remove unsupported ones]
+    W --> V
+    V --> REF[Numbered citations + references]
 ```
 
 1. **Classification** - Decides whether the latest message is a research question (including factual and news questions), needs clarification, or is out of scope, and estimates its complexity. It reads the previous turns, so follow-ups and clarifications are turned into a self-contained question
@@ -40,6 +41,7 @@ flowchart TD
 6. **Answer Synthesis** - Writes the answer from the findings only, citing sources as `[n]`; the references section is generated from the source metadata, listing only the sources actually cited. Two formats, chosen by the classifier (or forced with `OUTPUT_MODE=chat|report`):
    - **chat**: a direct answer, for questions
    - **report**: for requests of a report, review or in-depth analysis, each outline section is written in parallel from the findings tagged for it (plus the unassigned ones), then an editor adds the title, the executive summary and the conclusion
+7. **Verification** - Every sentence, list item or table row with a citation is checked against the findings (claim and verbatim evidence) of the sources it cites: partially supported claims are rewritten to what the evidence supports, unsupported ones rewritten or removed, and citations to unknown sources dropped. The share of supported claims is recorded with the run (`VERIFY=false` disables the step)
 
 A failing source or step (network error, rate limit, model error) is logged and skipped: the run continues with the rest. `MODEL` and `FAST_MODEL` accept comma-separated chains of models: when a model fails with a quota, rate-limit or server error, the next one in the chain takes over (by default `gemini-flash-latest` and `gemini-flash-lite-latest` back each other up).
 

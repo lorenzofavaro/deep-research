@@ -30,6 +30,7 @@ ROLES = {
     'Synthesize the research findings': 'answer',
     'Report Section Writer': 'section',
     'Report Editor': 'frame',
+    'Citation Verifier': 'verify',
 }
 
 PAPERS = [
@@ -153,6 +154,11 @@ DEFAULT_RESPONSES: dict[str, Any] = {
     'research': researcher,
     'reflect': {'sufficient': True, 'missing': '', 'follow_up_tasks': []},
     'answer': 'SSMs scale linearly [1]. Transformers dominate [2]. Invented [9].',
+    'verify': lambda request: {
+        'verdicts': [
+            {'id': int(n), 'verdict': 'supported'} for n in re.findall(r'^## Claim (\d+)', request.contents[0].parts[0].text, re.M)
+        ],
+    },
 }
 SIMPLE = {**DEFAULT_RESPONSES['classify'], 'complexity': 'simple'}
 REPORT = {**DEFAULT_RESPONSES['classify'], 'output': 'report'}
@@ -192,6 +198,9 @@ class Script:
         response = self.responses[role]
         if callable(response):
             response = response(request)
+        if role == 'answer' and isinstance(response, str):
+            # The answer agent returns a structured draft, verified before it is shown
+            response = {'answer': response}
         if isinstance(response, types.FunctionCall):
             return [types.Part(function_call=response)]
         if isinstance(response, list):
@@ -292,15 +301,15 @@ def test_research_run_produces_answer_with_valid_references(script):
     # The scout and each researcher: search, read, record, brief
     assert calls.count() == Counter(
         classify=1, plan=1,
-        research=12, reflect=1, answer=1,
+        research=12, reflect=1, answer=1, verify=1,
     )
     text = references(events)
     assert '[1]' in text and '[2]' in text and '[9]' not in text
     assert 'Ada Lovelace, "Paper One"' in text
-    assert state['conversation'][-1] == {
-        'role': 'assistant',
-        'text': DEFAULT_RESPONSES['answer'],
-    }
+    # The citation to a source that does not exist is dropped
+    verified = 'SSMs scale linearly [1]. Transformers dominate [2]. Invented.'
+    assert state['conversation'][-1] == {'role': 'assistant', 'text': verified}
+    assert events[-2] == ('root', verified)
     steps = state['last_run']['steps']
     assert [
         step['step']['lens']
@@ -374,7 +383,7 @@ def test_findings_are_tagged_with_sections_and_coverage_is_checked(script):
     calls = script(reflect=follow_up)
     _, state = run('How do SSMs compare to transformers?')
 
-    steps = {step['step']['objective']: step for step in state['last_run']['steps']}
+    steps = {step['step']['objective']             : step for step in state['last_run']['steps']}
     [paper_findings] = steps['Find core SSM papers']['findings'].values()
     assert [finding['section'] for finding in paper_findings] == ['s1']
     [reflect_input] = calls.inputs('reflect')
@@ -523,7 +532,7 @@ def test_follow_up_turn_sees_previous_conversation(script):
 
     second_classify_input = calls.inputs('classify')[1]
     assert 'User: How do SSMs compare to transformers?' in second_classify_input
-    assert DEFAULT_RESPONSES['answer'] in second_classify_input
+    assert 'Assistant: SSMs scale linearly [1]. Transformers dominate [2]. Invented.' in second_classify_input
     assert second_classify_input.endswith('And what about memory usage?')
 
 
@@ -546,7 +555,7 @@ def test_reflection_runs_new_follow_up_tasks_only(script):
     # Round 2 runs one researcher; no reflection after the last round
     assert calls.count() == Counter(
         classify=1, plan=1,
-        research=16, reflect=1, answer=1,
+        research=16, reflect=1, answer=1, verify=1,
     )
     rounds = [
         text for author, text in events if author ==
@@ -668,3 +677,78 @@ def test_a_failing_section_does_not_break_the_report(script):
 
     report = state['last_run']['answer']
     assert '## Current landscape' in report and '## How SSMs work' not in report
+
+
+def test_claims_are_verified_and_corrected(script):
+    answer = (
+        'SSMs scale linearly with length [1]. SSMs are 10x faster than transformers [1].\n\n'
+        '- Transformers dominate in 2026 [2]\n'
+        '- Transformers are obsolete [2]\n\n'
+        'A sentence without citations.'
+    )
+
+    def verifier(request):
+        text = request.contents[0].parts[0].text
+        claims = dict(re.findall(r'^## Claim (\d+)\n(.*)$', text, re.M))
+        verdicts = []
+        for number, claim in claims.items():
+            if '10x' in claim:
+                verdicts.append({
+                    'id': int(number), 'verdict': 'partial',
+                    'fix': 'SSMs are faster on long inputs [1].',
+                })
+            elif 'obsolete' in claim:
+                verdicts.append(
+                    {'id': int(number), 'verdict': 'unsupported', 'fix': ''},
+                )
+            else:
+                verdicts.append({'id': int(number), 'verdict': 'supported'})
+        return {'verdicts': verdicts}
+
+    calls = script(answer=answer, verify=verifier)
+    events, state = run('How do SSMs compare to transformers?')
+
+    [verify_input] = calls.inputs('verify')
+    # Each claim comes with the evidence of the sources it cites
+    assert 'scale linearly with the sequence length' in verify_input.split('## Claim 2')[
+        0
+    ]
+    assert 'A sentence without citations' not in verify_input
+    verified = state['last_run']['answer']
+    assert verified == (
+        'SSMs scale linearly with length [1]. SSMs are faster on long inputs [1].\n\n'
+        '- Transformers dominate in 2026 [2]\n\n'
+        'A sentence without citations.'
+    )
+    assert events[-2] == ('root', verified)
+    stats = state['last_run']['verification']
+    assert (
+        stats['checked'], stats['supported'],
+        stats['partial'], stats['unsupported'],
+    ) == (4, 2, 1, 1)
+    assert (
+        stats['rewritten'], stats['removed'],
+        stats['supported_rate'],
+    ) == (1, 1, 0.5)
+
+
+def test_verification_can_be_disabled(script, monkeypatch):
+    monkeypatch.setattr(config, 'verify', False)
+    calls = script()
+    _, state = run('How do SSMs compare to transformers?')
+
+    assert calls.count()[
+        'verify'
+    ] == 0 and state['last_run']['verification'] is None
+    assert state['last_run']['answer'] == DEFAULT_RESPONSES['answer']
+
+
+def test_failing_verification_keeps_the_answer(script):
+    def broken_verifier(request):
+        raise RuntimeError('model crashed')
+
+    script(verify=broken_verifier)
+    _, state = run('How do SSMs compare to transformers?')
+
+    assert state['last_run']['answer'] == 'SSMs scale linearly [1]. Transformers dominate [2]. Invented.'
+    assert state['last_run']['verification']['error']
