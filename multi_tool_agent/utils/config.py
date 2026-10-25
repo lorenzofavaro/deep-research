@@ -24,6 +24,8 @@ class Config:
         self.max_steps = _int_env('MAX_STEPS', 3)
         self.max_iterations = _int_env('MAX_ITERATIONS', 2)
         self.researcher_tool_calls = _int_env('RESEARCHER_TOOL_CALLS', 10)
+        # Quick survey of the landscape before planning (skipped for simple questions); 0 disables it
+        self.scout_tool_calls = _int_env('SCOUT_TOOL_CALLS', 3)
         self.passages_per_read = _int_env('PASSAGES_PER_READ', 6)
 
         # ArXiv

@@ -46,13 +46,34 @@ def _format_result(result: StepResult) -> str:
     return summary + (f' (error: {result.error})' if result.error else '')
 
 
+def _format_plan(plan: ResearchPlan) -> str:
+    lines = ['Outline:', *(f'- {section.title}' for section in plan.outline)]
+    if plan.quality_constraints:
+        lines += [
+            'Quality constraints:', *
+            (f'- {constraint}' for constraint in plan.quality_constraints),
+        ]
+    return '\n'.join(lines)
+
+
+def scout_task(question: str) -> ResearchTask:
+    """The task of the scout, a researcher that quickly maps the landscape before planning."""
+    return ResearchTask(
+        objective=f'Survey the landscape of this question: {question}',
+        sources=['papers', 'web'],
+        lens='scout',
+        boundaries='in-depth analysis, which other researchers do after you',
+    )
+
+
 @node(name='research', rerun_on_resume=True)
 async def research(ctx: Context, node_input: types.Content):
     """
     Execute the complete research workflow for the latest user message.
 
-    Classify the message, plan the research tasks, run rounds of parallel researchers until the reflection agent
-    is satisfied (or the round limit is reached), then write the answer with its references.
+    Classify the message; let a scout survey the landscape (except for simple questions); plan the outline, the
+    quality constraints and the research tasks; run rounds of parallel researchers until the reflection agent finds
+    the coverage sufficient (or the round limit is reached); then write the answer with its references.
 
     Args:
         ctx: Node context
@@ -86,13 +107,23 @@ async def research(ctx: Context, node_input: types.Content):
 
     question = classification.user_intent
     complexity = classification.complexity
+    results: list[StepResult] = []
+
+    scout = None
+    if complexity != 'simple' and config.scout_tool_calls > 0:
+        yield Event(message='Surveying the landscape')
+        [scout] = await run_research_round(
+            ctx, [scout_task(question)], question, complexity, budget=config.scout_tool_calls,
+        )
+        results.append(scout)
+
     plan = ResearchPlan.model_validate(
-        await ctx.run_node(plan_agent(), node_input=plan_input(question, complexity)),
+        await ctx.run_node(plan_agent(), node_input=plan_input(question, complexity, scout)),
     )
+    yield Event(message=_format_plan(plan))
     tasks = plan.tasks[:config.max_steps]
 
-    # Research loop: run the researchers, then let the reflection agent decide whether to dig deeper
-    results: list[StepResult] = []
+    # Research loop: run the researchers, then let the reflection agent check the coverage
     executed: set[str] = set()
     for iteration in range(1, config.max_iterations + 1):
         tasks = [
@@ -106,15 +137,19 @@ async def research(ctx: Context, node_input: types.Content):
 
         logger.info(f'Research round {iteration}')
         yield Event(message=f'Research round {iteration}:\n{_format_tasks(tasks)}')
-        round_results = await run_research_round(ctx, tasks, question, complexity)
+        round_results = await run_research_round(ctx, tasks, question, complexity, plan.outline)
         results += round_results
         yield Event(message='\n'.join(_format_result(result) for result in round_results))
 
         if iteration == config.max_iterations:
             break
         reflection = Reflection.model_validate(
-            await ctx.run_node(reflect_agent(), node_input=reflect_input(question, results)),
+            await ctx.run_node(reflect_agent(), node_input=reflect_input(question, plan, results)),
         )
+        if reflection.revised_outline:
+            plan = plan.model_copy(
+                update={'outline': reflection.revised_outline},
+            )
         if reflection.sufficient:
             break
         logger.info(f'Research incomplete: {reflection.missing}')
@@ -132,6 +167,7 @@ async def research(ctx: Context, node_input: types.Content):
     # The last run, for inspection and for the smoke test
     ctx.state['last_run'] = {
         'question': question,
+        'plan': plan.model_dump(),
         'steps': [result.model_dump() for result in results],
         'answer': answer,
     }

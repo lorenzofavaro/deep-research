@@ -33,6 +33,7 @@ MINIMAL_BUDGET = {
     'MAX_STEPS': '2',
     'MAX_ITERATIONS': '1',
     'RESEARCHER_TOOL_CALLS': '4',
+    'SCOUT_TOOL_CALLS': '2',
     'WEB_RESULTS': '3',
 }
 

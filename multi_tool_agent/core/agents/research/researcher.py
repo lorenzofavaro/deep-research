@@ -11,12 +11,14 @@ from google.adk.models import LlmRequest
 from google.adk.models import LlmResponse
 from google.adk.workflow import node
 from pydantic import BaseModel
+from pydantic import Field
 
 from multi_tool_agent.core import llm
 from multi_tool_agent.core.agents.research.store import ResearchStore
 from multi_tool_agent.core.models import Finding
 from multi_tool_agent.core.models import LENSES
 from multi_tool_agent.core.models import ResearchTask
+from multi_tool_agent.core.models import Section
 from multi_tool_agent.core.models import Source
 from multi_tool_agent.core.models import StepResult
 from multi_tool_agent.core.tools import arxiv
@@ -41,14 +43,16 @@ You own one task: research it thoroughly with your tools, record what you find, 
 - Objective: {objective}
 - Lens: {lens} — {lens_description}
 - Out of scope (other researchers cover it): {boundaries}
+{sections}
 
 **Tools**
 {tool_guide}
 - `read_source(source_id, focus)`: read the passages of a source most relevant to `focus` (what you are looking \
 for). Read a source before recording findings from it; read it again with another focus if needed.
-- `record_finding(source_id, claim, evidence)`: save a finding. `claim` is a self-contained statement (concrete \
+- `record_finding(source_id, claim, evidence, section_id)`: save a finding. `claim` is a self-contained statement (concrete \
 names, numbers, conditions); `evidence` is a short quote copied VERBATIM from the source text you read. Findings \
-are the only thing the final report can use: record everything relevant, from every useful source.
+are the only thing the final report can use: record everything relevant, from every useful source. `section_id` \
+is the report section the finding is evidence for (one of yours, see above; empty if none).
 - `think(reflection)`: pause to assess what you have and decide the next move.
 
 **Strategy**
@@ -76,6 +80,10 @@ class TaskInput(BaseModel):
     task: ResearchTask
     question: str
     complexity: Literal['simple', 'moderate', 'complex'] = 'moderate'
+    # The outline sections the task serves
+    sections: list[Section] = Field(default_factory=list)
+    # Overrides the budget derived from the complexity
+    budget: Optional[int] = None
 
 
 def researcher_budget(complexity: str) -> int:
@@ -83,13 +91,14 @@ def researcher_budget(complexity: str) -> int:
     return min(5, config.researcher_tool_calls) if complexity == 'simple' else config.researcher_tool_calls
 
 
-def make_tools(store: ResearchStore, sources: list[str]) -> list[Callable[..., Any]]:
+def make_tools(store: ResearchStore, sources: list[str], section_ids: list[str] = ()) -> list[Callable[..., Any]]:
     """
     Create the researcher's tools, bound to its store.
 
     Args:
         store: Where the tools keep sources, texts and findings
         sources: Source types of the task ("web", "papers")
+        section_ids: Ids of the outline sections the task serves
 
     Returns:
         The tool functions
@@ -170,24 +179,29 @@ def make_tools(store: ResearchStore, sources: list[str]) -> list[Callable[..., A
             'passages': [f'[passage {position}] {passage}' for position, passage in passages],
         }
 
-    async def record_finding(source_id: str, claim: str, evidence: str) -> dict[str, Any]:
+    async def record_finding(source_id: str, claim: str, evidence: str, section_id: str = '') -> dict[str, Any]:
         """Record a finding supported by a verbatim quote from a source you read.
 
         Args:
             source_id: Id of the source
             claim: Self-contained statement relevant to your objective
             evidence: Short quote copied verbatim from the source
+            section_id: Id of the report section the finding is evidence for, or empty
 
         Returns:
             Whether the finding was recorded
         """
         if source_id not in store.sources:
             return {'error': f'Unknown source_id {source_id!r}.'}
+        if section_id and section_ids and section_id not in section_ids:
+            return {'error': f'Unknown section_id {section_id!r}: use one of {section_ids} or leave it empty.'}
         text = store.texts.get(source_id) or store.previews.get(source_id, '')
         if not quote_in_text(evidence, text):
             return {'error': 'The evidence is not a verbatim quote from the source: read it and copy the exact text.'}
         added = store.add_finding(
-            source_id, Finding(claim=claim, evidence=evidence),
+            source_id, Finding(
+                claim=claim, evidence=evidence, section=section_id,
+            ),
         )
         return {'recorded': added}
 
@@ -222,7 +236,21 @@ def _report_errors(tool: Callable[..., Any]) -> Callable[..., Any]:
     return wrapper
 
 
-def researcher_agent(task: ResearchTask, store: ResearchStore) -> LlmAgent:
+def _format_sections(sections: list[Section]) -> str:
+    if not sections:
+        return ''
+    lines = [
+        '- Report sections you gather evidence for (use their ids in `record_finding`):',
+    ]
+    for section in sections:
+        lines.append(
+            f'  - `{section.id}` {section.title}: ' +
+            '; '.join(section.questions),
+        )
+    return '\n'.join(lines)
+
+
+def researcher_agent(task: ResearchTask, store: ResearchStore, sections: list[Section] = ()) -> LlmAgent:
     """
     Create a researcher for a task: an LLM agent with its own tool loop and search budget.
 
@@ -232,6 +260,7 @@ def researcher_agent(task: ResearchTask, store: ResearchStore) -> LlmAgent:
     Args:
         task: The research task
         store: The researcher's store, shared with its tools
+        sections: The outline sections the task serves
 
     Returns:
         The configured LlmAgent
@@ -248,6 +277,7 @@ def researcher_agent(task: ResearchTask, store: ResearchStore) -> LlmAgent:
             ) if source in sources
         ),
         budget=store.budget,
+        sections=_format_sections(sections),
     )
 
     def enforce_budget(callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
@@ -274,7 +304,7 @@ def researcher_agent(task: ResearchTask, store: ResearchStore) -> LlmAgent:
         model=llm.build_model(config.fast_model),
         instruction=lambda _: instruction,
         include_contents='none',
-        tools=make_tools(store, sources),
+        tools=make_tools(store, sources, [section.id for section in sections]),
         before_model_callback=enforce_budget,
     )
 
@@ -303,10 +333,13 @@ async def research_task(ctx: Context, node_input: TaskInput) -> StepResult:
         The task result: sources, findings and brief
     """
     task = node_input.task
-    store = ResearchStore(budget=researcher_budget(node_input.complexity))
+    store = ResearchStore(
+        budget=node_input.budget or researcher_budget(node_input.complexity),
+    )
     result = StepResult(step=task)
+    agent = researcher_agent(task, store, node_input.sections)
     try:
-        brief = await ctx.run_node(researcher_agent(task, store), node_input=researcher_input(task, node_input.question))
+        brief = await ctx.run_node(agent, node_input=researcher_input(task, node_input.question))
         result.brief = brief or ''
     except Exception as e:
         logger.error(

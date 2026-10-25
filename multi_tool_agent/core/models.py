@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from pydantic import Field
 
 LENSES = {
+    'scout': 'map the landscape quickly: main sub-topics, key terms, landmark papers and authoritative sources',
     'evidence': 'gather the core facts, data and results that answer the objective',
     'comparator': 'compare the alternatives (methods, products, positions) on concrete criteria and numbers',
     'critic': 'look for limitations, failures, counter-evidence and disagreements between sources',
@@ -20,15 +21,28 @@ class ResearchTask(BaseModel):
     sources: list[Literal['papers', 'web']] = Field(
         description='Where to look: "papers" (arXiv) for academic literature, "web" for current information',
     )
-    lens: Literal['evidence', 'comparator', 'critic', 'horizon'] = Field(
+    lens: Literal['evidence', 'comparator', 'critic', 'horizon', 'scout'] = Field(
         default='evidence',
-        description='Angle of the research: ' +
-        '; '.join(f'{name}: {text}' for name, text in LENSES.items()),
+        description='Angle of the research: '
+        + '; '.join(
+            f'{name}: {text}' for name,
+            text in LENSES.items() if name != 'scout'
+        ),
     )
     boundaries: str = Field(
         default='',
         description='What NOT to cover because other researchers handle it; empty if nothing to exclude',
     )
+    section_ids: list[str] = Field(
+        default_factory=list, description='Ids of the outline sections this task gathers evidence for',
+    )
+
+
+class Section(BaseModel):
+    """A section of the report outline."""
+    id: str = Field(description='Short identifier, e.g. "s1"')
+    title: str
+    questions: list[str] = Field(description='What the section must answer')
 
 
 class Source(BaseModel):
@@ -51,6 +65,8 @@ class Finding(BaseModel):
     evidence: str = Field(
         description='Short verbatim quote from the source that supports the claim',
     )
+    # Id of the outline section the finding is evidence for, if any
+    section: str = ''
 
 
 class StepResult(BaseModel):
