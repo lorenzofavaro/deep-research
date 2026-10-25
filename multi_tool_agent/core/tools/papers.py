@@ -1,16 +1,6 @@
 import asyncio
-import re
+from typing import Any
 
-from google.adk.agents.context import Context
-
-from multi_tool_agent.core.agents.research.arxiv.filter import filter_agent
-from multi_tool_agent.core.agents.research.arxiv.filter import filter_input
-from multi_tool_agent.core.agents.research.arxiv.filter import PaperIDs
-from multi_tool_agent.core.agents.research.base import extract_findings
-from multi_tool_agent.core.agents.research.base import StepTask
-from multi_tool_agent.core.models import Source
-from multi_tool_agent.core.models import StepResult
-from multi_tool_agent.core.tools.arxiv import get_arxiv_paper_text
 from multi_tool_agent.core.tools.arxiv import get_arxiv_papers
 from multi_tool_agent.core.tools.arxiv import relax_query
 from multi_tool_agent.core.tools.arxiv import search_arxiv
@@ -22,16 +12,17 @@ from multi_tool_agent.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-async def research_arxiv(ctx: Context, task: StepTask, result: StepResult) -> None:
+async def search_papers(query: str) -> list[dict[str, Any]]:
     """
-    Research step on arXiv: search, select the most relevant papers, read them in full and extract findings.
+    Search arXiv papers: text-relevance results from arXiv plus the most cited matching papers from OpenAlex,
+    with citation counts. A query that matches nothing on arXiv is retried in a relaxed form.
 
     Args:
-        ctx: Context of the step node
-        task: The research step
-        result: Step result to fill
+        query: Query in arXiv API syntax
+
+    Returns:
+        Candidate papers with id, title, abstract, authors, published date, url and citations (when known)
     """
-    query = task.step.query
     candidates, cited = await asyncio.gather(
         search_arxiv(query, max_results=config.arxiv_candidates),
         search_cited_arxiv_papers(query, max_results=config.cited_candidates),
@@ -40,47 +31,8 @@ async def research_arxiv(ctx: Context, task: StepTask, result: StepResult) -> No
         logger.info(
             f'No ArXiv results for "{query}", retrying with "{relaxed}"',
         )
-        query = relaxed
-        candidates = await search_arxiv(query, max_results=config.arxiv_candidates)
-        result.notes.append(f'relaxed query `{query}`')
-    candidates = await merge_with_citations(candidates, cited)
-    result.notes.append(
-        f'{len(candidates)} candidates ({len(cited)} most cited from OpenAlex)',
-    )
-    if not candidates:
-        return
-
-    output = await ctx.run_node(filter_agent(), node_input=filter_input(task.step, task.question, candidates))
-    # The model may add version suffixes or invent IDs: keep only known candidates
-    papers = {paper['id']: paper for paper in candidates}
-    selected = []
-    for paper_id in PaperIDs.model_validate(output or {}).ids:
-        paper = papers.get(re.sub(r'v\d+$', '', paper_id.strip()))
-        if paper and paper not in selected:
-            selected.append(paper)
-    selected = selected[:config.papers_per_step]
-    result.notes.append(f'{len(selected)} papers read')
-    if not selected:
-        return
-
-    texts = await asyncio.gather(
-        *(
-            get_arxiv_paper_text(paper['id'], max_chars=config.paper_max_chars)
-            for paper in selected
-        ),
-        return_exceptions=True,
-    )
-    documents = []
-    for paper, text in zip(selected, texts):
-        if isinstance(text, BaseException):
-            logger.warning(f'Skipping ArXiv paper {paper["id"]}: {text}')
-            continue
-        source = Source(
-            key=f'arxiv:{paper["id"]}', kind='arxiv', title=paper['title'], url=paper['url'],
-            authors=paper['authors'], published=paper['published'],
-        )
-        documents.append((source, text))
-    result.sources, result.findings = await extract_findings(ctx, task, documents)
+        candidates = await search_arxiv(relaxed, max_results=config.arxiv_candidates)
+    return await merge_with_citations(candidates, cited)
 
 
 async def merge_with_citations(candidates: list[dict], cited: list[dict]) -> list[dict]:

@@ -8,25 +8,29 @@ A **multi-agent AI research assistant** powered by [Gemini](https://ai.google.de
 
 ```mermaid
 flowchart TD
-    U[User message] --> C{Classify}
+    U[User message] --> C{Classify + complexity}
     C -- general / need more info --> R[Reply to the user]
-    C -- valid --> P[Plan up to 3 steps]
+    C -- valid --> P[Plan up to 3 research tasks]
     P --> S
-    subgraph S[Research round: steps run in parallel]
-        A[arXiv + OpenAlex: search → select papers → read full text → extract findings]
-        W[Web: Tavily search → read pages → extract findings]
+    subgraph S[Research round: researchers run in parallel]
+        A[Researcher: search → read passages → record findings with verbatim evidence → brief]
     end
     S --> F{Reflect: are the findings enough?}
-    F -- no, follow-up steps --> S
+    F -- no, follow-up tasks --> S
     F -- yes / round limit --> X[Answer with numbered citations + references]
 ```
 
-1. **Classification** - Decides whether the latest message is a research question (including factual and news questions), needs clarification, or is out of scope. It reads the previous turns, so follow-ups and clarifications are turned into a self-contained question
-2. **Planning** - Creates up to 3 independent steps, each with a tool, a query in that tool's syntax (arXiv API syntax for papers, keywords for the web) and a goal
-3. **Research** - Runs the steps in parallel; every source is read in full and turned into structured findings (claim + verbatim evidence):
-   - **ArXiv**: collects candidates from the arXiv search (30, ranked by text relevance; the query is relaxed if it returns nothing) and from [OpenAlex](https://openalex.org/) (the 15 most cited arXiv papers matching the query, which the text search often misses), adds citation counts, lets the model select the 3 most relevant from title, abstract, date and citations, downloads their full text (arXiv HTML, PDF as fallback) and extracts findings from each paper
-   - **Web**: searches with [Tavily](https://tavily.com/) including the page text, and extracts findings from each page
-4. **Reflection** - Reviews the findings and, if important gaps remain, plans follow-up steps for another round (2 rounds by default)
+1. **Classification** - Decides whether the latest message is a research question (including factual and news questions), needs clarification, or is out of scope, and estimates its complexity. It reads the previous turns, so follow-ups and clarifications are turned into a self-contained question
+2. **Planning** - Splits the question into up to 3 independent tasks, like a lead researcher briefing colleagues: an objective, where to look (papers, web), a lens (evidence, comparator, critic, horizon) and boundaries, so researchers do not overlap. Simple questions get one task
+3. **Research** - Each task goes to an autonomous researcher with its own context, tools and search budget (10 search/read calls, 5 for simple questions):
+   - `search_papers`: arXiv search plus the most cited matching papers from [OpenAlex](https://openalex.org/), with citation counts; paper metadata always comes from arXiv
+   - `web_search`: [Tavily](https://tavily.com/) search, including the page text
+   - `read_source`: the passages of a paper (arXiv HTML, PDF as fallback) or page most relevant to what the researcher is looking for
+   - `record_finding`: a claim with a quote from the source, rejected unless the quote is (nearly) verbatim
+   - `think`: a pause to assess progress
+
+   Raw source text stays with the researcher: it returns only its findings and a short brief. Once the budget is exhausted the search tools are removed, so the researcher wraps up
+4. **Reflection** - Reviews the findings and briefs and, if important gaps remain, delegates follow-up tasks for another round (2 rounds by default)
 5. **Answer Synthesis** - Writes the answer from the findings only, citing sources as `[n]`; the references section is generated from the source metadata, listing only the sources actually cited
 
 A failing source or step (network error, rate limit, model error) is logged and skipped: the run continues with the rest. `MODEL` and `FAST_MODEL` accept comma-separated chains of models: when a model fails with a quota, rate-limit or server error, the next one in the chain takes over (by default `gemini-flash-latest` and `gemini-flash-lite-latest` back each other up).
@@ -40,7 +44,7 @@ A failing source or step (network error, rate limit, model error) is logged and 
   - `Google AI API key` (for Gemini models)
   - `Tavily API key` (for web search)
 
-A research run makes roughly 15-20 model requests (more with a second round): about 5 go to `MODEL` (classification, planning, reflection, answer) and the rest to `FAST_MODEL` (paper selection and extraction). The Gemini free tier has a small daily quota per model, so it allows only a few runs per day; use a paid key for regular use.
+A research run makes roughly 15-40 model requests, depending on the number of researchers and rounds: about 5 go to `MODEL` (classification, planning, reflection, answer) and the rest to `FAST_MODEL` (the researchers). The Gemini free tier has a small daily quota per model, so it allows only a few runs per day; use a paid key for regular use.
 
 OpenAlex works without a key on a small daily budget shared by IP address; for regular use, get a free key at [openalex.org](https://openalex.org/settings/api) and set `OPENALEX_API_KEY`.
 
@@ -91,7 +95,7 @@ OpenAlex works without a key on a small daily budget shared by IP address; for r
    uv run python evals/smoke.py
    ```
 
-   It runs 3 simple questions (a current fact, a well-known paper, a mixed question) with minimal research budgets, about 5-8 model calls each, so it fits the Gemini free tier. It checks that each run completes, that every step finds something and that every citation has a reference, and it reports model calls, tokens and time. Use `--questions FILE` for your own questions and `--full-budget` for the configured budgets. Reports are saved in `evals/out/<system>/idx-<n>.md`, the layout used by [DeepResearch Bench II](https://github.com/imlrz/DeepResearch-Bench-II).
+   It runs 3 simple questions (a current fact, a well-known paper, a mixed question) with minimal research budgets (one round, at most two researchers with 4 search/read calls each: about 8-15 model calls per question), so it fits the Gemini free tier. It checks that each run completes, that the researchers find something and that every citation has a reference, and it reports model calls, tokens and time. Use `--questions FILE` for your own questions and `--full-budget` for the configured budgets. Reports are saved in `evals/out/<system>/idx-<n>.md`, the layout used by [DeepResearch Bench II](https://github.com/imlrz/DeepResearch-Bench-II).
 
 ## Usage Examples
 

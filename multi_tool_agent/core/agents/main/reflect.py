@@ -2,9 +2,9 @@ from google.adk.agents import LlmAgent
 from pydantic import BaseModel
 from pydantic import Field
 
-from multi_tool_agent.core.agents.main.plan import TOOLS_GUIDE
+from multi_tool_agent.core.agents.main.plan import DELEGATION_GUIDE
 from multi_tool_agent.core.llm import llm_agent
-from multi_tool_agent.core.models import ResearchStep
+from multi_tool_agent.core.models import ResearchTask
 from multi_tool_agent.core.models import StepResult
 from multi_tool_agent.utils.config import config
 from multi_tool_agent.utils.utils import today
@@ -18,9 +18,9 @@ class Reflection(BaseModel):
     missing: str = Field(
         description='What is still missing or contradictory; empty if sufficient',
     )
-    follow_up_steps: list[ResearchStep] = Field(
+    follow_up_tasks: list[ResearchTask] = Field(
         default_factory=list,
-        description='New research steps that fill the gaps; empty if sufficient',
+        description='New research tasks that fill the gaps; empty if sufficient',
     )
 
 
@@ -29,26 +29,28 @@ question and decide whether more research is needed.
 
 **Process:**
 1. Check whether the findings answer every part of the question, with enough evidence and recency
-2. Identify gaps: unanswered sub-questions, missing recent data, contradictions, steps that returned nothing
-3. If there are important gaps, plan follow-up steps that fill them
+2. Identify gaps: unanswered sub-questions, missing recent data, contradictions, tasks that found nothing
+3. If there are important gaps, delegate follow-up tasks that fill them
 
-{TOOLS_GUIDE}
+{DELEGATION_GUIDE}
 
 **Requirements:**
 - Mark the research as sufficient when the remaining gaps are minor: more research costs time
-- At most {config.max_steps} follow-up steps, independent from each other
-- Never repeat a query that was already executed; if a query returned nothing, reformulate it (e.g. broader terms, \
-the other tool)"""
+- At most {config.max_steps} follow-up tasks, independent from each other and focused on the gaps
+- Never repeat a task that was already done; if a task found nothing, reformulate it (narrower objective, other \
+sources)"""
 
 
 def _format_results(results: list[StepResult]) -> str:
     lines = []
     for result in results:
         lines.append(
-            f'## Step [{result.step.tool}] `{result.step.query}` (goal: {result.step.goal})',
+            f'## Task ({result.step.lens}, {", ".join(result.step.sources)}): {result.step.objective}',
         )
         if result.error:
             lines.append(f'Failed: {result.error}')
+        if result.brief:
+            lines.append(f'Researcher brief: {result.brief}')
         titles = {source.key: source.title for source in result.sources}
         for key, findings in result.findings.items():
             lines.append(f'- Source: {titles.get(key, key)}')
@@ -60,11 +62,11 @@ def _format_results(results: list[StepResult]) -> str:
 
 def reflect_input(question: str, results: list[StepResult]) -> str:
     """
-    Build the reflection input from the results of all the steps executed so far.
+    Build the reflection input from the results of all the tasks executed so far.
 
     Args:
         question: The research question
-        results: Results of the executed steps
+        results: Results of the executed tasks
 
     Returns:
         The reflection input
@@ -73,7 +75,7 @@ def reflect_input(question: str, results: list[StepResult]) -> str:
 
 
 def reflect_agent() -> LlmAgent:
-    """Create the agent that reviews the findings and plans follow-up steps (input: `reflect_input`)."""
+    """Create the agent that reviews the findings and plans follow-up tasks (input: `reflect_input`)."""
     return llm_agent(
         name='ReflectAgent',
         model=config.model,

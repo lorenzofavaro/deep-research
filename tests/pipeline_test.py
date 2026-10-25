@@ -1,20 +1,31 @@
+import asyncio
+
+import pytest
+from google.adk.models import BaseLlm
 from google.adk.models import FallbackModel
 from google.adk.models import Gemini
+from google.adk.models import LlmRequest
+from google.genai.errors import ClientError
 
+from multi_tool_agent.core import llm
 from multi_tool_agent.core.agents.main.answer import build_registry
 from multi_tool_agent.core.agents.main.answer import format_references
 from multi_tool_agent.core.llm import build_model
 from multi_tool_agent.core.models import Finding
-from multi_tool_agent.core.models import ResearchStep
+from multi_tool_agent.core.models import ResearchTask
 from multi_tool_agent.core.models import Source
 from multi_tool_agent.core.models import StepResult
+from multi_tool_agent.core.tools import papers
 from multi_tool_agent.core.tools.arxiv import _html_to_text
 from multi_tool_agent.core.tools.arxiv import relax_query
 from multi_tool_agent.core.tools.openalex import _abstract
 from multi_tool_agent.core.tools.openalex import _arxiv_id
 from multi_tool_agent.core.tools.openalex import to_boolean_search
+from multi_tool_agent.core.tools.passages import quote_in_text
+from multi_tool_agent.core.tools.passages import split_passages
+from multi_tool_agent.core.tools.passages import top_passages
 
-STEP = ResearchStep(tool='web', query='q', goal='g')
+STEP = ResearchTask(objective='o', sources=['web'])
 
 
 def _source(key: str) -> Source:
@@ -107,16 +118,141 @@ def test_arxiv_id_from_doi_or_locations():
 def test_model_chain_falls_back_on_quota_errors():
     single = build_model('gemini-flash-latest')
     assert isinstance(
-        single, Gemini,
-    ) and 429 in single.retry_options.http_status_codes
+        single, llm.QuotaAwareGemini,
+    ) and 429 not in single.retry_options.http_status_codes
 
     chain = build_model('gemini-flash-latest, gemini-flash-lite-latest')
     assert isinstance(chain, FallbackModel)
-    primary, backup = chain.models
-    assert (primary.model, backup.model) == (
+    assert [model.model for model in chain.models] == [
         'gemini-flash-latest', 'gemini-flash-lite-latest',
-    )
-    # A quota error moves to the backup right away instead of being retried on the primary
-    assert 429 not in primary.retry_options.http_status_codes
-    assert 429 in backup.retry_options.http_status_codes
+    ]
     assert 429 in chain.retriable_status_codes
+
+
+def _quota_error(quota_id: str, delay: str) -> ClientError:
+    return ClientError(
+        429, {
+            'error': {
+                'code': 429, 'details': [
+                    {
+                        '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                        'violations': [{'quotaId': quota_id}],
+                    },
+                    {
+                        '@type': 'type.googleapis.com/google.rpc.RetryInfo',
+                        'retryDelay': delay,
+                    },
+                ],
+            },
+        },
+    )
+
+
+def _drain(model: BaseLlm) -> list:
+    async def main():
+        return [response async for response in model.generate_content_async(LlmRequest())]
+    return asyncio.run(main())
+
+
+def test_rate_limits_are_retried_and_daily_quotas_skipped(monkeypatch):
+    calls = []
+    errors: list = [
+        _quota_error(
+            'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', '7s',
+        ),
+    ]
+
+    async def generate(self, llm_request, stream=False):
+        calls.append(self.model)
+        if errors:
+            raise errors.pop(0)
+        yield 'ok'
+
+    async def no_sleep(seconds):
+        calls.append(f'sleep {seconds:.0f}')
+
+    monkeypatch.setattr(Gemini, 'generate_content_async', generate)
+    monkeypatch.setattr(llm.asyncio, 'sleep', no_sleep)
+    monkeypatch.setattr(llm, '_exhausted_until', {})
+    model = build_model('model-a')
+
+    # Per-minute limit: wait the suggested delay, then retry the same model
+    assert _drain(model) == ['ok']
+    assert calls == ['model-a', 'sleep 7', 'model-a']
+
+    # Daily quota: fail at once, and do not call the API again while it lasts
+    calls.clear()
+    errors.append(
+        _quota_error(
+            'GenerateRequestsPerDayPerProjectPerModel-FreeTier', '3600s',
+        ),
+    )
+    with pytest.raises(ClientError):
+        _drain(model)
+    with pytest.raises(ClientError):
+        _drain(model)
+    assert calls == ['model-a']
+
+
+def test_passages_keep_paragraphs_and_rank_by_relevance():
+    text = '\n'.join(
+        ['Intro about cooking pasta.'] * 3 +
+        ['Speculative decoding uses a draft model to propose tokens.']
+        + ['Unrelated closing remarks.'] * 3,
+    )
+    passages = split_passages(text, size=60)
+    assert all(len(passage) <= 120 for passage in passages)
+    [(_, best)] = top_passages(
+        text, 'how does speculative decoding work', limit=1, size=60,
+    )
+    assert 'draft model' in best
+
+
+def test_quote_check_tolerates_formatting_but_not_fabrication():
+    text = 'Our method reduces latency by 2.3x on A100 GPUs, compared to standard autoregressive decoding.'
+    assert quote_in_text('reduces latency by 2.3x on A100 GPUs', text)
+    assert quote_in_text(
+        'Our method reduces latency by 2.3x on A100 GPUs, compared to standard  decoding.', text,
+    )
+    assert not quote_in_text('reduces latency by 5x on TPUs', text)
+    assert not quote_in_text('', text)
+
+
+def test_papers_found_only_by_openalex_use_arxiv_metadata(monkeypatch):
+    lora = {
+        'id': '2106.09685', 'title': 'LoRA: Low-Rank Adaptation of Large Language Models', 'abstract': 'LoRA.',
+        'authors': ['Edward J. Hu'], 'published': '2021-06-17', 'url': 'https://arxiv.org/abs/2106.09685',
+    }
+
+    async def get_arxiv_papers(arxiv_ids):
+        return [dict(lora)] if '2106.09685' in arxiv_ids else []
+
+    async def get_citation_counts(arxiv_ids):
+        return {arxiv_id: 3 for arxiv_id in arxiv_ids}
+
+    monkeypatch.setattr(papers, 'get_arxiv_papers', get_arxiv_papers)
+    monkeypatch.setattr(papers, 'get_citation_counts', get_citation_counts)
+    common = {
+        'abstract': 'x', 'authors': [
+            'Someone',
+        ], 'published': '2023-01-01', 'citations': 500,
+    }
+    cited = [
+        # OpenAlex attached the title of another work to the LoRA ID
+        {
+            **common, 'id': '2106.09685', 'title': 'Wrong title',
+            'url': 'https://arxiv.org/abs/2106.09685',
+        },
+        # Not confirmed by arXiv: must not become a candidate
+        {
+            **common, 'id': '2301.99999', 'title': 'Ghost paper',
+            'url': 'https://arxiv.org/abs/2301.99999',
+        },
+    ]
+    other = {**lora, 'id': '2401.00001', 'title': 'Other'}
+    merged = asyncio.run(papers.merge_with_citations([dict(other)], cited))
+
+    assert [(paper['id'], paper['title'], paper['citations']) for paper in merged] == [
+        ('2401.00001', 'Other', 3),
+        ('2106.09685', 'LoRA: Low-Rank Adaptation of Large Language Models', 500),
+    ]

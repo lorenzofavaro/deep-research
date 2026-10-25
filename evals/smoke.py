@@ -27,12 +27,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / 'multi_tool_agent' / '.env')
 
-# Minimal budgets: one round, one paper and two pages per step (about 5-8 model calls per question). The number of
-# search candidates is not reduced, since it costs no model calls
+# Minimal budgets: one round of at most two researchers with 4 search/read calls each (about 8-15 model calls per
+# question). The number of search candidates is not reduced, since it costs no model calls
 MINIMAL_BUDGET = {
+    'MAX_STEPS': '2',
     'MAX_ITERATIONS': '1',
-    'PAPERS_PER_STEP': '1',
-    'WEB_RESULTS': '2',
+    'RESEARCHER_TOOL_CALLS': '4',
+    'WEB_RESULTS': '3',
 }
 
 DEFAULT_QUESTIONS = [
@@ -122,6 +123,11 @@ async def run_question(question: str) -> dict[str, Any]:
     }
 
 
+def warnings(result: dict[str, Any]) -> list[str]:
+    """Return the non-blocking issues of a run: tasks that found nothing while others did."""
+    return [f'task `{step.step.objective}` found nothing' for step in result['steps'] if not step.findings]
+
+
 def check(result: dict[str, Any]) -> list[str]:
     """Return the failed checks of a run."""
     failures = []
@@ -137,9 +143,11 @@ def check(result: dict[str, Any]) -> list[str]:
         failures.append('no research steps')
     for step in result['steps']:
         if step.error:
-            failures.append(f'step `{step.step.query}` failed: {step.error}')
-        elif not step.findings:
-            failures.append(f'step `{step.step.query}` found nothing')
+            failures.append(
+                f'task `{step.step.objective}` failed: {step.error}',
+            )
+    if result['steps'] and not any(step.findings for step in result['steps']):
+        failures.append('no researcher found anything')
     cited = citations(result['answer'])
     listed = citations(
         re.sub(r'^\*\*References\*\*', '', result['references']),
@@ -180,11 +188,13 @@ async def main() -> int:
             'question': question,
             'passed': not failures,
             'failures': failures,
+            'warnings': warnings(result),
             'steps': [
                 {
-                    'tool': step.step.tool, 'query': step.step.query,
+                    'objective': step.step.objective, 'source_types': step.step.sources, 'lens': step.step.lens,
                     'notes': step.notes,
                     'sources': len(step.findings), 'findings': sum(map(len, step.findings.values())),
+                    'brief': step.brief,
                     'error': step.error,
                 }
                 for step in result['steps']

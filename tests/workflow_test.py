@@ -15,16 +15,16 @@ from google.genai import types
 
 from multi_tool_agent import agent as agent_module
 from multi_tool_agent.core import llm
-from multi_tool_agent.core.agents.research.arxiv import arx_agent
-from multi_tool_agent.core.agents.research.web import search_agent
+from multi_tool_agent.core.tools import arxiv
+from multi_tool_agent.core.tools import papers
+from multi_tool_agent.core.tools import tavily
 from multi_tool_agent.utils.config import config
 
 # Each agent is recognized by a phrase of its system instruction
 ROLES = {
     'Request Classification Agent': 'classify',
     'Research Planning Agent': 'plan',
-    'Research Search Agent': 'select',
-    'Research Extraction Agent': 'extract',
+    'You are a Research Agent': 'research',
     'Research Reflection Agent': 'reflect',
     'Synthesize the research findings': 'answer',
 }
@@ -32,55 +32,92 @@ ROLES = {
 PAPERS = [
     {
         'id': '2401.00001', 'title': 'Paper One', 'abstract': 'About SSMs.', 'authors': ['Ada Lovelace'],
-        'published': '2024-01-01', 'url': 'https://arxiv.org/abs/2401.00001',
-    },
-    {
-        'id': '2401.00002', 'title': 'Paper Two', 'abstract': 'Unrelated.', 'authors': ['Alan Turing'],
-        'published': '2024-01-02', 'url': 'https://arxiv.org/abs/2401.00002',
+        'published': '2024-01-01', 'url': 'https://arxiv.org/abs/2401.00001', 'citations': 10,
     },
 ]
-# Papers the arXiv API knows by ID, beyond the search results
-ARXIV_RECORDS = {
-    '2106.09685': {
-        'id': '2106.09685', 'title': 'LoRA: Low-Rank Adaptation of Large Language Models', 'abstract': 'LoRA.',
-        'authors': ['Edward J. Hu'], 'published': '2021-06-17', 'url': 'https://arxiv.org/abs/2106.09685',
-    },
-}
+PAPER_TEXT = 'Introduction.\nState space models scale linearly with the sequence length of the input.\nConclusion.'
 PAGES = [
     {
-        'title': 'Page One', 'url': 'https://example.com/1',
-        'published': '2026-01-01', 'content': 'Web text one.',
+        'title': 'Page One', 'url': 'https://example.com/1', 'published': '2026-01-01',
+        'content': 'Transformers remain the dominant architecture for language models in 2026.',
     },
     {
-        'title': 'Page Two', 'url': 'https://example.com/2',
-        'published': '', 'content': 'Web text two.',
+        'title': 'Page Two', 'url': 'https://example.com/2', 'published': '',
+        'content': 'Hybrid models mix attention layers with state space layers.',
     },
 ]
 
+PLAN = {
+    'tasks': [
+        {
+            'objective': 'Find core SSM papers',
+            'sources': ['papers'], 'lens': 'evidence',
+        },
+        {
+            'objective': 'Find recent coverage',
+            'sources': ['web'], 'lens': 'horizon',
+        },
+    ],
+}
 
-def _title(user_input: str) -> str:
-    return next(line[len('Title: '):] for line in user_input.splitlines() if line.startswith('Title: '))
+
+def function_responses(request: LlmRequest) -> list[dict]:
+    return [
+        part.function_response.response
+        for content in request.contents for part in content.parts or [] if part.function_response
+    ]
+
+
+def tool_names(request: LlmRequest) -> set[str]:
+    return {
+        declaration.name
+        for tool in request.config.tools or [] for declaration in tool.function_declarations or []
+    }
+
+
+def call(name: str, **args: Any) -> types.FunctionCall:
+    return types.FunctionCall(name=name, args=args)
+
+
+def read_source_id(request: LlmRequest) -> str:
+    calls = [
+        part.function_call for content in request.contents for part in content.parts or []
+        if part.function_call and part.function_call.name == 'read_source'
+    ]
+    return calls[-1].args['source_id']
+
+
+def researcher(request: LlmRequest) -> Any:
+    """Search, read the first result, record a finding quoting it, then write the brief."""
+    responses = function_responses(request)
+    tools = tool_names(request)
+    if not responses:
+        search = 'search_papers' if 'search_papers' in tools else 'web_search'
+        return call(search, query='state space models')
+    last = responses[-1]
+    if last.get('results'):
+        return call('read_source', source_id=last['results'][0]['source_id'], focus='state space models')
+    if 'passages' in last:
+        quote = max(
+            last['passages'][0].split('] ', 1)[
+                1
+            ].splitlines(), key=len,
+        )
+        return call(
+            'record_finding', source_id=read_source_id(request), claim=f'Claim from {last["title"]}', evidence=quote,
+        )
+    return 'Brief: done.'
 
 
 DEFAULT_RESPONSES: dict[str, Any] = {
-    'classify': {'type': 'valid', 'user_intent': 'How do state space models compare to transformers?'},
-    'plan': {
-        'steps': [
-            {
-                'tool': 'arxiv', 'query': 'abs:"state space model"',
-                'goal': 'Find core SSM papers',
-            },
-            {
-                'tool': 'web', 'query': 'state space models vs transformers',
-                'goal': 'Find recent coverage',
-            },
-        ],
+    'classify': {
+        'type': 'valid', 'complexity': 'moderate',
+        'user_intent': 'How do state space models compare to transformers?',
     },
-    # The second ID is not among the candidates and must be discarded
-    'select': {'ids': ['2401.00001v2', '9999.99999']},
-    'extract': lambda user_input: {'findings': [{'claim': f'Claim from {_title(user_input)}', 'evidence': 'quote'}]},
-    'reflect': {'sufficient': True, 'missing': '', 'follow_up_steps': []},
-    'answer': 'SSMs scale linearly [1]. The web agrees [2, 3]. Invented [9].',
+    'plan': PLAN,
+    'research': researcher,
+    'reflect': {'sufficient': True, 'missing': '', 'follow_up_tasks': []},
+    'answer': 'SSMs scale linearly [1]. Transformers dominate [2]. Invented [9].',
 }
 
 
@@ -89,24 +126,33 @@ class Script:
 
     def __init__(self, **overrides: Any) -> None:
         self.responses = {**DEFAULT_RESPONSES, **overrides}
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, LlmRequest]] = []
 
-    def __call__(self, system_instruction: str, user_input: str) -> str:
+    def __call__(self, request: LlmRequest) -> list[types.Part]:
+        system_instruction = str(request.config.system_instruction or '')
         role = next(
             role for phrase, role in ROLES.items()
             if phrase in system_instruction
         )
-        self.calls.append((role, user_input))
+        self.calls.append((role, request))
         response = self.responses[role]
         if callable(response):
-            response = response(user_input)
-        return response if isinstance(response, str) else json.dumps(response)
+            response = response(request)
+        if isinstance(response, types.FunctionCall):
+            return [types.Part(function_call=response)]
+        if isinstance(response, list):
+            return [types.Part(function_call=function_call) for function_call in response]
+        return [types.Part(text=response if isinstance(response, str) else json.dumps(response))]
 
     def count(self) -> Counter:
         return Counter(role for role, _ in self.calls)
 
+    def requests(self, role: str) -> list[LlmRequest]:
+        return [request for call_role, request in self.calls if call_role == role]
+
     def inputs(self, role: str) -> list[str]:
-        return [user_input for call_role, user_input in self.calls if call_role == role]
+        """The first user message of each call of a role."""
+        return [request.contents[0].parts[0].text for request in self.requests(role)]
 
 
 class ScriptedLlm(BaseLlm):
@@ -117,12 +163,7 @@ class ScriptedLlm(BaseLlm):
     async def generate_content_async(
         self, llm_request: LlmRequest, stream: bool = False,
     ) -> AsyncGenerator[LlmResponse, None]:
-        system_instruction = str(llm_request.config.system_instruction or '')
-        user_input = ''.join(
-            part.text or '' for content in llm_request.contents for part in content.parts
-        )
-        text = self.script(system_instruction, user_input)
-        yield LlmResponse(content=types.Content(role='model', parts=[types.Part(text=text)]))
+        yield LlmResponse(content=types.Content(role='model', parts=self.script(llm_request)))
 
 
 @pytest.fixture
@@ -135,32 +176,18 @@ def script(monkeypatch):
         ),
     )
 
-    async def search_arxiv(query, max_results=30):
+    async def search_papers(query):
         return [dict(paper) for paper in PAPERS]
 
-    async def no_cited_papers(query, max_results=15):
-        return []
-
-    async def citation_counts(arxiv_ids):
-        return {arxiv_id: 10 for arxiv_id in arxiv_ids}
-
     async def paper_text(arxiv_id, max_chars=100_000):
-        return f'Full text of {arxiv_id}'
+        return PAPER_TEXT
 
     async def tavily_search(query, max_results=5):
         return [dict(page) for page in PAGES]
 
-    async def get_arxiv_papers(arxiv_ids):
-        return [dict(ARXIV_RECORDS[arxiv_id]) for arxiv_id in arxiv_ids if arxiv_id in ARXIV_RECORDS]
-
-    monkeypatch.setattr(arx_agent, 'search_arxiv', search_arxiv)
-    monkeypatch.setattr(arx_agent, 'get_arxiv_papers', get_arxiv_papers)
-    monkeypatch.setattr(
-        arx_agent, 'search_cited_arxiv_papers', no_cited_papers,
-    )
-    monkeypatch.setattr(arx_agent, 'get_citation_counts', citation_counts)
-    monkeypatch.setattr(arx_agent, 'get_arxiv_paper_text', paper_text)
-    monkeypatch.setattr(search_agent, 'tavily_search', tavily_search)
+    monkeypatch.setattr(papers, 'search_papers', search_papers)
+    monkeypatch.setattr(arxiv, 'get_arxiv_paper_text', paper_text)
+    monkeypatch.setattr(tavily, 'tavily_search', tavily_search)
 
     def install(**overrides: Any) -> Script:
         holder['script'] = Script(**overrides)
@@ -170,7 +197,7 @@ def script(monkeypatch):
 
 
 def run(*messages: str) -> tuple[list[tuple[str, str]], dict]:
-    """Run the root agent on a conversation; returns the (author, text) of each event and the final state."""
+    """Run the workflow on a conversation; returns the (author, text) of each event and the final state."""
     runner = InMemoryRunner(
         agent=Workflow(
             name='root', edges=[('START', agent_module.research)],
@@ -198,37 +225,151 @@ def run(*messages: str) -> tuple[list[tuple[str, str]], dict]:
     return asyncio.run(main())
 
 
+def references(events: list[tuple[str, str]]) -> str:
+    author, text = events[-1]
+    assert author == 'root'
+    return text
+
+
 def test_research_run_produces_answer_with_valid_references(script):
     calls = script()
     events, state = run('How do SSMs compare to transformers?')
 
-    # One round (sufficient after reflection): 1 selected paper + 2 pages are extracted
-    assert calls.count() == Counter(
-        classify=1, plan=1,
-        select=1, extract=3, reflect=1, answer=1,
-    )
-    references = events[-1][1]
-    assert events[-1][0] == 'root'
-    assert '[1]' in references and '[2]' in references and '[3]' in references
-    assert '[9]' not in references
-    assert 'Paper Two' not in references and '9999.99999' not in references
+    # Each researcher: search, read, record, brief
+    assert calls.count() == Counter(classify=1, plan=1, research=8, reflect=1, answer=1)
+    text = references(events)
+    assert '[1]' in text and '[2]' in text and '[9]' not in text
+    assert 'Ada Lovelace, "Paper One"' in text and '"Page One"' in text
     assert state['conversation'][-1] == {
         'role': 'assistant',
         'text': DEFAULT_RESPONSES['answer'],
     }
+    assert [
+        step['brief'] for step in state['last_run']
+        ['steps']
+    ] == ['Brief: done.', 'Brief: done.']
 
 
-def test_agents_receive_only_their_own_input(script):
+def test_researchers_get_their_own_task_and_tools(script):
     calls = script()
     run('How do SSMs compare to transformers?')
 
-    [select_input] = calls.inputs('select')
-    assert 'Find core SSM papers' in select_input
-    assert 'Find recent coverage' not in select_input
-    for extract_input in calls.inputs('extract'):
-        assert extract_input.count('<source>') == 1
+    first_calls = [
+        request for request in calls.requests(
+            'research',
+        ) if not function_responses(request)
+    ]
+    by_objective = {
+        request.contents[0].parts[0].text.split('Your objective: ')[
+            1
+        ].split('\n')[0]: request
+        for request in first_calls
+    }
+    assert set(by_objective) == {
+        'Find core SSM papers', 'Find recent coverage',
+    }
+    common = {'read_source', 'record_finding', 'think'}
+    assert tool_names(by_objective['Find core SSM papers']) == {
+        'search_papers', *common,
+    }
+    assert tool_names(by_objective['Find recent coverage']) == {
+        'web_search', *common,
+    }
+    # A researcher never sees the other researcher's tool calls
+    for request in calls.requests('research'):
+        seen = json.dumps(function_responses(request))
+        assert not ('Paper One' in seen and 'Page One' in seen)
     [answer_input] = calls.inputs('answer')
-    assert 'Claim from Paper One' in answer_input and 'Claim from Page Two' in answer_input
+    assert 'Claim from Paper One' in answer_input and 'Claim from Page One' in answer_input
+    assert 'scale linearly with the sequence length' in answer_input
+
+
+def test_findings_need_verbatim_evidence(script):
+    def fabricating_researcher(request):
+        response = researcher(request)
+        if isinstance(response, types.FunctionCall) and response.name == 'record_finding':
+            return call('record_finding', source_id=response.args['source_id'], claim='x', evidence='made up words here')
+        return response
+
+    calls = script(research=fabricating_researcher, answer='Nothing found.')
+    _, state = run('How do SSMs compare to transformers?')
+
+    assert all(not step['findings'] for step in state['last_run']['steps'])
+    rejected = [
+        r for request in calls.requests(
+            'research',
+        ) for r in function_responses(request) if 'error' in r
+    ]
+    assert rejected and 'not a verbatim quote' in rejected[0]['error']
+
+
+def test_search_budget_is_enforced(script, monkeypatch):
+    monkeypatch.setattr(config, 'researcher_tool_calls', 2)
+    searches = []
+
+    async def tavily_search(query, max_results=5):
+        searches.append(query)
+        return [dict(page) for page in PAGES]
+    monkeypatch.setattr(tavily, 'tavily_search', tavily_search)
+
+    def endless_searcher(request):
+        if 'web_search' in tool_names(request):
+            return call('web_search', query=f'query {len(function_responses(request))}')
+        return 'Brief: out of budget.'
+
+    script(
+        plan={'tasks': [PLAN['tasks'][1]]},
+        research=endless_searcher, answer='Nothing.',
+    )
+    _, state = run('How do SSMs compare to transformers?')
+
+    assert len(searches) == 2
+    assert state['last_run']['steps'][0]['brief'] == 'Brief: out of budget.'
+
+
+def test_budget_holds_for_parallel_tool_calls(script, monkeypatch):
+    monkeypatch.setattr(config, 'researcher_tool_calls', 2)
+    searches = []
+
+    async def tavily_search(query, max_results=5):
+        searches.append(query)
+        return []
+    monkeypatch.setattr(tavily, 'tavily_search', tavily_search)
+
+    def parallel_searcher(request):
+        if not function_responses(request):
+            return [call('web_search', query=f'query {i}') for i in range(4)]
+        return 'Brief.'
+
+    script(
+        plan={'tasks': [PLAN['tasks'][1]]},
+        research=parallel_searcher, answer='None.',
+    )
+    run('How do SSMs compare to transformers?')
+
+    assert len(searches) == 2
+
+
+def test_simple_questions_get_a_smaller_budget(script, monkeypatch):
+    searches = []
+
+    async def tavily_search(query, max_results=5):
+        searches.append(query)
+        return []
+    monkeypatch.setattr(tavily, 'tavily_search', tavily_search)
+
+    def endless_searcher(request):
+        return call('web_search', query='q') if 'web_search' in tool_names(request) else 'Brief.'
+
+    classify = {**DEFAULT_RESPONSES['classify'], 'complexity': 'simple'}
+    script(
+        classify=classify, plan={
+            'tasks': [PLAN['tasks'][1]],
+        }, research=endless_searcher, answer='None.',
+    )
+    run('Who won the 2026 Nobel Prize in Physics?')
+
+    assert len(searches) == 5
 
 
 def test_non_research_message_gets_a_reply_without_research(script):
@@ -254,106 +395,83 @@ def test_follow_up_turn_sees_previous_conversation(script):
     assert second_classify_input.endswith('And what about memory usage?')
 
 
-def test_reflection_runs_new_follow_up_steps_only(script):
+def test_reflection_runs_new_follow_up_tasks_only(script):
     follow_up = {
         'sufficient': False,
         'missing': 'Recent benchmarks',
-        'follow_up_steps': [
-            # Already executed in round 1, up to case and spacing: must be skipped
+        'follow_up_tasks': [
+            # Already done in round 1, up to case and spacing: must be skipped
+            {'objective': 'find recent  coverage', 'sources': ['web']},
             {
-                'tool': 'web', 'query': 'State space models  vs transformers',
-                'goal': 'Repeat',
-            },
-            {
-                'tool': 'web', 'query': 'SSM long context benchmarks',
-                'goal': 'Find benchmarks',
+                'objective': 'Find long context benchmarks',
+                'sources': ['web'], 'lens': 'comparator',
             },
         ],
     }
     calls = script(reflect=follow_up)
     events, _ = run('How do SSMs compare to transformers?')
 
-    # Round 2 runs one web step (2 pages); no reflection after the last round
+    # Round 2 runs one researcher; no reflection after the last round
     assert calls.count() == Counter(
         classify=1, plan=1,
-        select=1, extract=5, reflect=1, answer=1,
+        research=12, reflect=1, answer=1,
     )
-    round_messages = [
+    rounds = [
         text for author, text in events if author ==
         'root' and text.startswith('Research round')
     ]
-    assert len(round_messages) == 2
-    assert 'SSM long context benchmarks' in round_messages[1] and 'Repeat' not in round_messages[1]
+    assert len(rounds) == 2
+    assert 'Find long context benchmarks' in rounds[1] and 'recent' not in rounds[1]
+    [reflect_input] = calls.inputs('reflect')
+    assert 'Researcher brief: Brief: done.' in reflect_input and 'Claim from Paper One' in reflect_input
 
 
 def test_plan_is_capped_to_max_steps(script, monkeypatch):
     monkeypatch.setattr(config, 'max_steps', 1)
     plan = {
-        'steps': [{
-            'tool': 'web', 'query': f'query {i}',
-            'goal': f'goal {i}',
+        'tasks': [{
+            'objective': f'objective {i}',
+            'sources': ['web'],
         } for i in range(4)],
     }
     calls = script(plan=plan)
     run('How do SSMs compare to transformers?')
 
-    assert calls.count()['extract'] == len(PAGES)
+    assert calls.count()['research'] == 4
 
 
-def test_failing_tools_and_extractions_do_not_abort_the_run(script, monkeypatch):
-    async def broken_search(query, max_results=30):
+def test_failing_tools_are_reported_to_the_researcher(script, monkeypatch):
+    async def broken_search(query):
         raise RuntimeError('arXiv is down')
-    monkeypatch.setattr(arx_agent, 'search_arxiv', broken_search)
+    monkeypatch.setattr(papers, 'search_papers', broken_search)
 
-    def extract(user_input: str) -> Any:
-        if _title(user_input) == 'Page One':
-            return 'not json'
-        return DEFAULT_RESPONSES['extract'](user_input)
+    calls = script(answer='Only the web survived [1].')
+    events, state = run('How do SSMs compare to transformers?')
 
-    calls = script(
-        extract=extract,
-        answer='Only the second page survived [1].',
+    papers_step, web_step = state['last_run']['steps']
+    assert not papers_step['findings'] and papers_step['error'] is None
+    assert web_step['findings']
+    errors = [
+        r['error'] for request in calls.requests(
+            'research',
+        ) for r in function_responses(request) if 'error' in r
+    ]
+    assert any('arXiv is down' in error for error in errors)
+    assert '[1] "Page One"' in references(events)
+
+
+def test_failing_researcher_keeps_its_findings(script):
+    def crashing_researcher(request):
+        if any(response.get('recorded') for response in function_responses(request)):
+            raise RuntimeError('model crashed')
+        return researcher(request)
+
+    script(
+        plan={'tasks': [PLAN['tasks'][1]]},
+        research=crashing_researcher, answer='Kept [1].',
     )
     events, state = run('How do SSMs compare to transformers?')
 
-    assert calls.count()['answer'] == 1
-    assert '[1] "Page Two"' in events[-1][1]
-    errors = [
-        step['error']
-        for step in state['last_run']['steps'] if step['error']
-    ]
-    assert errors == ['arXiv is down']
-
-
-def test_papers_found_only_by_openalex_use_arxiv_metadata(script, monkeypatch):
-    async def cited_papers(query, max_results=15):
-        common = {
-            'abstract': 'x', 'authors': [
-                'Someone',
-            ], 'published': '2023-01-01', 'citations': 500,
-        }
-        return [
-            # OpenAlex attached the title of another work to the LoRA ID
-            {
-                **common, 'id': '2106.09685', 'title': 'Wrong title',
-                'url': 'https://arxiv.org/abs/2106.09685',
-            },
-            # Not confirmed by arXiv: must not become a candidate
-            {
-                **common, 'id': '2301.99999', 'title': 'Ghost paper',
-                'url': 'https://arxiv.org/abs/2301.99999',
-            },
-        ]
-    monkeypatch.setattr(arx_agent, 'search_cited_arxiv_papers', cited_papers)
-    plan = {'steps': [DEFAULT_RESPONSES['plan']['steps'][0]]}
-    calls = script(
-        plan=plan, select={
-            'ids': ['2106.09685'],
-        }, answer='LoRA freezes the weights [1].',
-    )
-    events, _ = run('What is LoRA?')
-
-    [select_input] = calls.inputs('select')
-    assert 'LoRA: Low-Rank Adaptation' in select_input and '"citations": 500' in select_input
-    assert 'Wrong title' not in select_input and 'Ghost paper' not in select_input
-    assert '[1] Edward J. Hu, "LoRA: Low-Rank Adaptation of Large Language Models"' in events[-1][1]
+    [step] = state['last_run']['steps']
+    assert step['error'] and step['findings']
+    assert '[1] "Page One"' in references(events)

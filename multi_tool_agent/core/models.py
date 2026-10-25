@@ -4,17 +4,30 @@ from typing import Optional
 from pydantic import BaseModel
 from pydantic import Field
 
+LENSES = {
+    'evidence': 'gather the core facts, data and results that answer the objective',
+    'comparator': 'compare the alternatives (methods, products, positions) on concrete criteria and numbers',
+    'critic': 'look for limitations, failures, counter-evidence and disagreements between sources',
+    'horizon': 'find the most recent developments, open problems and where the field is heading',
+}
 
-class ResearchStep(BaseModel):
-    """Individual step in a research plan."""
-    tool: Literal['arxiv', 'web'] = Field(
-        description='Source to search: "arxiv" for academic papers, "web" for current information',
+
+class ResearchTask(BaseModel):
+    """A research task delegated to one researcher."""
+    objective: str = Field(
+        description='What the researcher must find out, as a specific question or goal',
     )
-    query: str = Field(
-        description='Search query in the syntax of the chosen tool (arXiv API syntax or web search keywords)',
+    sources: list[Literal['papers', 'web']] = Field(
+        description='Where to look: "papers" (arXiv) for academic literature, "web" for current information',
     )
-    goal: str = Field(
-        description='What this step must find out to help answer the research question',
+    lens: Literal['evidence', 'comparator', 'critic', 'horizon'] = Field(
+        default='evidence',
+        description='Angle of the research: ' +
+        '; '.join(f'{name}: {text}' for name, text in LENSES.items()),
+    )
+    boundaries: str = Field(
+        default='',
+        description='What NOT to cover because other researchers handle it; empty if nothing to exclude',
     )
 
 
@@ -40,20 +53,14 @@ class Finding(BaseModel):
     )
 
 
-class Findings(BaseModel):
-    """Findings extracted from one source."""
-    findings: list[Finding] = Field(
-        default_factory=list,
-        description='Relevant findings; empty if the source does not help with the goal',
-    )
-
-
 class StepResult(BaseModel):
-    """Outcome of a research step, stored in the session state."""
-    step: ResearchStep
+    """Outcome of a research task."""
+    step: ResearchTask
     sources: list[Source] = Field(default_factory=list)
     # Findings grouped by Source.key
     findings: dict[str, list[Finding]] = Field(default_factory=dict)
-    # Short progress notes, e.g. number of candidates
+    # The researcher's closing summary: what was found, what is missing
+    brief: str = ''
+    # Short progress notes, e.g. number of tool calls
     notes: list[str] = Field(default_factory=list)
     error: Optional[str] = None

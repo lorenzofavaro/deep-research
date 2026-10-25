@@ -3,53 +3,53 @@ from pydantic import BaseModel
 from pydantic import Field
 
 from multi_tool_agent.core.llm import llm_agent
-from multi_tool_agent.core.models import ResearchStep
+from multi_tool_agent.core.models import ResearchTask
 from multi_tool_agent.utils.config import config
 from multi_tool_agent.utils.utils import today
 
 
 class ResearchPlan(BaseModel):
-    """Complete research plan, whose steps run in parallel."""
-    steps: list[ResearchStep] = Field(
-        description='List of independent research steps to execute',
+    """Complete research plan, whose tasks run in parallel."""
+    tasks: list[ResearchTask] = Field(
+        description='Independent research tasks, one per researcher',
     )
 
 
-# Shared with the reflection agent, which plans the follow-up steps
-TOOLS_GUIDE = """**Available Tools:**
-1. **arxiv** - Academic papers: theoretical foundations, methods, benchmarks, established research. The full text of \
-the most relevant papers is read.
-   The query MUST use arXiv API syntax, because plain sentences match almost everything:
-   - fields: `ti:` (title), `abs:` (abstract), `au:` (author), `cat:` (category, e.g. cat:cs.CL), `all:` (any field)
-   - phrases in double quotes, combined with AND / OR / ANDNOT and parentheses
-   - example: `abs:"retrieval augmented generation" AND (abs:evaluation OR abs:benchmark)`
-   - keep it to 2-3 key concepts: over-constrained queries return nothing
-2. **web** - Recent developments, news, industry applications, products, current facts. The query is a concise \
-search engine query (keywords, no instructions)."""
+# Shared with the reflection agent, which delegates the follow-up tasks
+DELEGATION_GUIDE = f"""**Researchers**
+Each task goes to an autonomous researcher that searches, reads sources and records findings on its own. Write \
+tasks like a lead researcher briefing a colleague:
+- `objective`: a specific question or goal, with the context needed to understand it
+- `sources`: "papers" (arXiv: methods, benchmarks, established research) and/or "web" (news, products, \
+industry, current facts)
+- `lens`: the angle — evidence (core facts and results), comparator (alternatives on concrete criteria), critic \
+(limitations, counter-evidence, disagreements), horizon (latest developments, open problems)
+- `boundaries`: what other researchers cover, so efforts do not overlap
 
-system_prompt = f"""You are a Research Planning Agent that turns a research question into a plan of search steps.
+**Effort scaling** (the complexity of the question is given)
+- simple (a single fact or definition): 1 task
+- moderate: 2-3 tasks
+- complex (comparisons, broad topics, several sub-questions): up to {config.max_steps} tasks, with different lenses"""
 
-{TOOLS_GUIDE}
+system_prompt = f"""You are a Research Planning Agent: you split a research question into tasks for parallel \
+researchers.
 
-**Process:**
-1. Break the question into its key components
-2. For each component pick the tool that is most likely to contain the answer
-3. Write a targeted query and state the goal of the step
+{DELEGATION_GUIDE}
 
 **Requirements:**
-- At most {config.max_steps} steps; use fewer when the question is narrow (e.g. a single current fact needs one web step)
-- Steps run in parallel, so they must be independent and must not overlap
-- Use arxiv only when academic literature is relevant; news and current facts need web
+- At most {config.max_steps} tasks; tasks run in parallel, so they must be independent
+- Together, the tasks must cover every part of the question
+- Use papers only when academic literature is relevant; news and current facts need web
 - Consider the current date when the question is about recent or latest developments"""
 
 
-def plan_input(question: str) -> str:
+def plan_input(question: str, complexity: str) -> str:
     """Build the planner input for a research question."""
-    return f'Current date: {today()}\nResearch question: {question}'
+    return f'Current date: {today()}\nResearch question: {question}\nComplexity: {complexity}'
 
 
 def plan_agent() -> LlmAgent:
-    """Create the agent that plans the research steps for a question (input: `plan_input`)."""
+    """Create the agent that plans the research tasks for a question (input: `plan_input`)."""
     return llm_agent(
         name='PlanAgent',
         model=config.model,
