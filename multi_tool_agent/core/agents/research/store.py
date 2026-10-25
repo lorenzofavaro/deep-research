@@ -1,5 +1,11 @@
+from typing import Literal
+from typing import Optional
+
 from multi_tool_agent.core.models import Finding
 from multi_tool_agent.core.models import Source
+
+# Model calls allowed after the budget is exhausted, to record the last findings and write the brief
+WRAP_UP_MODEL_CALLS = 3
 
 
 class ResearchStore:
@@ -14,11 +20,16 @@ class ResearchStore:
         Initialize the store.
 
         Args:
-            budget: Maximum number of search and read calls
+            budget: Maximum number of search and read calls; at most half of them can be searches, so that reading
+                is never starved
         """
         self.budget = budget
+        self.search_limit = max(1, budget // 2)
         self.calls = 0
+        self.searches = 0
         self.model_calls = 0
+        # Model call at which the budget ran out
+        self.exhausted_at: Optional[int] = None
         self.sources: dict[str, Source] = {}
         # Short description shown before a source is read (abstract or snippet)
         self.previews: dict[str, str] = {}
@@ -29,12 +40,18 @@ class ResearchStore:
     def exhausted(self) -> bool:
         return self.calls >= self.budget
 
-    def use_call(self) -> bool:
-        """Count a search or read call; returns False when the budget is exhausted."""
+    def use_call(self, kind: Literal['search', 'read']) -> Optional[str]:
+        """Count a search or read call; returns why it is refused, or None when it is allowed."""
         if self.exhausted:
-            return False
+            return 'Search budget exhausted: record your remaining findings, then write your final brief.'
+        if kind == 'search' and self.searches >= self.search_limit:
+            return (
+                'Search limit reached: read the most promising sources you found with read_source, and record '
+                'findings from them.'
+            )
         self.calls += 1
-        return True
+        self.searches += kind == 'search'
+        return None
 
     def add_source(self, source: Source, preview: str = '', text: str = '') -> None:
         self.sources.setdefault(source.key, source)

@@ -29,7 +29,7 @@ flowchart TD
 1. **Classification** - Decides whether the latest message is a research question (including factual and news questions), needs clarification, or is out of scope, and estimates its complexity. It reads the previous turns, so follow-ups and clarifications are turned into a self-contained question
 2. **Scouting** - Except for simple questions, a scout (a researcher with a 3-call budget) maps the landscape: sub-topics, key terms, landmark papers and authoritative sources. Its findings are kept for the answer
 3. **Planning** - An architect designs the answer from the scout's survey: the outline (sections with the questions they must answer), 2-4 checkable quality constraints, and up to 3 independent research tasks, like a lead researcher briefing colleagues: an objective, where to look (papers, web), a lens (evidence, comparator, critic, horizon), boundaries so researchers do not overlap, and the sections each task serves. Simple questions get one task
-4. **Research** - Each task goes to an autonomous researcher with its own context, tools and search budget (10 search/read calls, 5 for simple questions):
+4. **Research** - Each task goes to an autonomous researcher with its own context, tools and search budget (10 search/read calls, 5 for simple questions; at most half of them can be searches, so reading is never starved):
    - `search_papers`: arXiv search plus the most cited matching papers from [OpenAlex](https://openalex.org/), with citation counts; paper metadata always comes from arXiv
    - `web_search`: [Tavily](https://tavily.com/) search, including the page text
    - `read_source`: the passages of a paper (arXiv HTML, PDF as fallback) or page most relevant to what the researcher is looking for

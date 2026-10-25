@@ -15,6 +15,7 @@ from pydantic import Field
 
 from multi_tool_agent.core import llm
 from multi_tool_agent.core.agents.research.store import ResearchStore
+from multi_tool_agent.core.agents.research.store import WRAP_UP_MODEL_CALLS
 from multi_tool_agent.core.models import Finding
 from multi_tool_agent.core.models import LENSES
 from multi_tool_agent.core.models import ResearchTask
@@ -57,6 +58,8 @@ is the report section the finding is evidence for (one of yours, see above; empt
 
 **Strategy**
 - Start with short, broad queries, then narrow down based on what you find.
+- Alternate searching and reading: after each search, read the 1-2 most promising sources before searching \
+again. Spend at most half of your budget on searches: snippets and abstracts are not enough evidence.
 - Prefer primary and authoritative sources (papers, official docs and announcements, reputable outlets) over \
 SEO content and aggregators.
 - Cover the objective from several sources; look for numbers, comparisons and disagreements.
@@ -112,8 +115,8 @@ def make_tools(store: ResearchStore, sources: list[str], section_ids: list[str] 
         Returns:
             Results with source id, title, url, published date and snippet
         """
-        if not store.use_call():
-            return {'error': BUDGET_MESSAGE}
+        if refusal := store.use_call('search'):
+            return {'error': refusal}
         results = []
         for page in await tavily.tavily_search(query, max_results=config.web_results):
             source = Source(
@@ -138,8 +141,8 @@ def make_tools(store: ResearchStore, sources: list[str], section_ids: list[str] 
         Returns:
             Papers with source id, title, authors, date, citation count and abstract
         """
-        if not store.use_call():
-            return {'error': BUDGET_MESSAGE}
+        if refusal := store.use_call('search'):
+            return {'error': refusal}
         results = []
         for paper in await papers.search_papers(query):
             source = Source(
@@ -167,8 +170,8 @@ def make_tools(store: ResearchStore, sources: list[str], section_ids: list[str] 
         source = store.sources.get(source_id)
         if source is None:
             return {'error': f'Unknown source_id {source_id!r}: use an id returned by a search.'}
-        if not store.use_call():
-            return {'error': BUDGET_MESSAGE}
+        if refusal := store.use_call('read'):
+            return {'error': refusal}
         if source_id not in store.texts and source.kind == 'arxiv':
             paper_id = source_id.removeprefix('arxiv:')
             store.texts[source_id] = await arxiv.get_arxiv_paper_text(paper_id, max_chars=config.paper_max_chars)
@@ -282,21 +285,27 @@ def researcher_agent(task: ResearchTask, store: ResearchStore, sections: list[Se
 
     def enforce_budget(callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
         store.model_calls += 1
-        # Hard stop, in case the model keeps calling tools
-        allowed = set() if store.model_calls > 3 * store.budget + 5 else WRAP_UP_TOOLS
-        if store.exhausted or not allowed:
-            for tool in llm_request.config.tools or []:
-                if tool.function_declarations:
-                    tool.function_declarations = [
-                        d for d in tool.function_declarations if d.name in allowed
-                    ]
-            llm_request.config.tools = [
-                tool for tool in llm_request.config.tools or [] if tool.function_declarations
-            ]
-            llm_request.tools_dict = {
-                name: t for name, t in llm_request.tools_dict.items() if name in allowed
-            }
-            llm_request.append_instructions([BUDGET_MESSAGE])
+        # Also stop a model that keeps calling refused tools without ever exhausting the budget
+        runaway = store.model_calls > 2 * store.budget + WRAP_UP_MODEL_CALLS
+        if not store.exhausted and not runaway:
+            return None
+        if store.exhausted_at is None:
+            store.exhausted_at = store.model_calls
+        # A few calls to wrap up, then no tools at all, in case the model keeps calling them
+        allowed = WRAP_UP_TOOLS if store.model_calls - \
+            store.exhausted_at < WRAP_UP_MODEL_CALLS else set()
+        for tool in llm_request.config.tools or []:
+            if tool.function_declarations:
+                tool.function_declarations = [
+                    d for d in tool.function_declarations if d.name in allowed
+                ]
+        llm_request.config.tools = [
+            tool for tool in llm_request.config.tools or [] if tool.function_declarations
+        ]
+        llm_request.tools_dict = {
+            name: t for name, t in llm_request.tools_dict.items() if name in allowed
+        }
+        llm_request.append_instructions([BUDGET_MESSAGE])
         return None
 
     return LlmAgent(

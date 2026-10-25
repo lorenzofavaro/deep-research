@@ -469,7 +469,8 @@ def test_search_budget_is_enforced(script, monkeypatch):
     )
     _, state = run('How do SSMs compare to transformers?')
 
-    assert len(searches) == 2
+    # At most half of the budget goes to searches
+    assert len(searches) == 1
     assert state['last_run']['steps'][0]['brief'] == 'Brief: out of budget.'
 
 
@@ -493,7 +494,7 @@ def test_budget_holds_for_parallel_tool_calls(script, monkeypatch):
     )
     run('How do SSMs compare to transformers?')
 
-    assert len(searches) == 2
+    assert len(searches) == 1
 
 
 def test_simple_questions_get_a_smaller_budget(script, monkeypatch):
@@ -513,7 +514,8 @@ def test_simple_questions_get_a_smaller_budget(script, monkeypatch):
     )
     run('Who won the 2026 Nobel Prize in Physics?')
 
-    assert len(searches) == 5
+    # Budget 5, of which 2 searches
+    assert len(searches) == 2
 
 
 def test_non_research_message_gets_a_reply_without_research(script):
@@ -840,3 +842,30 @@ def test_a_failing_ensemble_run_does_not_break_the_answer(script, monkeypatch):
     assert {'Find core SSM papers', 'Find recent coverage'} <= {
         s['step']['objective'] for s in state['last_run']['steps']
     }
+
+
+def test_reading_is_never_starved_by_searches(script, monkeypatch):
+    monkeypatch.setattr(config, 'researcher_tool_calls', 4)
+
+    def search_then_read(request):
+        responses = function_responses(request)
+        searches = [
+            r for r in responses if 'results' in r or 'Search limit' in r.get('error', '')
+        ]
+        if len(searches) < 3:
+            return call('web_search', query=f'query {len(searches)}')
+        if not any('passages' in r for r in responses):
+            return call('read_source', source_id=PAGES[0]['url'], focus='architecture')
+        return 'Brief.'
+
+    calls = script(
+        classify=SIMPLE, plan=WEB_ONLY_PLAN,
+        research=search_then_read, answer='None.',
+    )
+    run('How do SSMs compare to transformers?')
+
+    # The last request carries the whole tool history of the researcher
+    responses = function_responses(calls.requests('research')[-1])
+    assert sum('results' in r for r in responses) == 2
+    assert any('Search limit reached' in r.get('error', '') for r in responses)
+    assert any('passages' in r for r in responses)
