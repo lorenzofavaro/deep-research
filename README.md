@@ -43,6 +43,10 @@ flowchart TD
    - **report**: for requests of a report, review or in-depth analysis, each outline section is written in parallel from the findings tagged for it (plus the unassigned ones), then an editor adds the title, the executive summary and the conclusion
 7. **Verification** - Every sentence, list item or table row with a citation is checked against the findings (claim and verbatim evidence) of the sources it cites: partially supported claims are rewritten to what the evidence supports, unsupported ones rewritten or removed, and citations to unknown sources dropped. The share of supported claims is recorded with the run (`VERIFY=false` disables the step)
 
+**Optional extensions** (off by default, since they multiply the model calls):
+- `REFINE=true`: a refinement pass on reports before verification — vague statements quantified with the evidence, comparison tables, explicit causal links — discarded if it drops citations
+- `ENSEMBLE_RUNS=N`: N independent research runs in parallel (one shared scout; the later runs are asked to explore different angles), whose findings are merged before writing, for more recall
+
 A failing source or step (network error, rate limit, model error) is logged and skipped: the run continues with the rest. `MODEL` and `FAST_MODEL` accept comma-separated chains of models: when a model fails with a quota, rate-limit or server error, the next one in the chain takes over (by default `gemini-flash-latest` and `gemini-flash-lite-latest` back each other up).
 
 ## Getting Started

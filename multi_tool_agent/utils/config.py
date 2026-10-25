@@ -39,6 +39,10 @@ class Config:
         self.output_mode = os.getenv('OUTPUT_MODE', 'auto')
         # Check every cited claim of the answer against its sources, rewriting or removing unsupported ones
         self.verify = os.getenv('VERIFY', 'true').lower() == 'true'
+        # Optional, off by default because they multiply the model calls: a refinement pass on reports
+        # (quantify, comparison tables, causal links), and N independent research runs merged before writing
+        self.refine = os.getenv('REFINE', 'false').lower() == 'true'
+        self.ensemble_runs = max(1, _int_env('ENSEMBLE_RUNS', 1))
 
         # Web
         self.tavily_api_key = os.getenv('TAVILY_API_KEY', '')
