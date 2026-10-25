@@ -11,6 +11,8 @@ from multi_tool_agent.core import llm
 from multi_tool_agent.core.agents.main.answer import build_registry
 from multi_tool_agent.core.agents.main.answer import format_references
 from multi_tool_agent.core.agents.main.report import section_input
+from multi_tool_agent.core.agents.main.verify import split_claims
+from multi_tool_agent.core.agents.main.verify import strip_invalid_citations
 from multi_tool_agent.core.llm import build_model
 from multi_tool_agent.core.models import Finding
 from multi_tool_agent.core.models import ResearchTask
@@ -295,3 +297,22 @@ def test_section_writer_gets_its_findings_and_the_unassigned_ones():
     assert '[1] "Title a"' in own and 'own' in own
     assert 'other section' not in text
     assert '[3] "Title c"' in shared and 'unassigned' in shared
+
+
+def test_claims_are_split_into_cited_sentences_items_and_rows():
+    text = (
+        '# Title [1]\n'
+        'First claim [1]. Second claim [2, 3]! No citation here. Third [1].\n'
+        '- An item [2]\n'
+        '| Method | Speed |\n'
+        '| A | 2x [3] |\n'
+    )
+    assert split_claims(text) == [
+        'First claim [1].', 'Second claim [2, 3]!', 'Third [1].', '- An item [2]', '| A | 2x [3] |',
+    ]
+
+
+def test_invalid_citations_are_stripped():
+    assert strip_invalid_citations(
+        'A [1, 7]. B [9]. C [2].', 2,
+    ) == ('A [1]. B. C [2].', 2)

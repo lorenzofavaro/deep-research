@@ -37,6 +37,8 @@ class Config:
 
         # Answer format: chat (direct answer), report (sections written one by one) or auto (the classifier decides)
         self.output_mode = os.getenv('OUTPUT_MODE', 'auto')
+        # Check every cited claim of the answer against its sources, rewriting or removing unsupported ones
+        self.verify = os.getenv('VERIFY', 'true').lower() == 'true'
 
         # Web
         self.tavily_api_key = os.getenv('TAVILY_API_KEY', '')

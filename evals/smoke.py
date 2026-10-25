@@ -116,6 +116,7 @@ async def run_question(question: str) -> dict[str, Any]:
         'question': question,
         'researched': last_run is not None,
         'answer': (last_run or {}).get('answer', ''),
+        'verification': (last_run or {}).get('verification'),
         'references': last_root_message if last_root_message.startswith('**References**') else '',
         'steps': [StepResult.model_validate(step) for step in (last_run or {}).get('steps', [])],
         'error': error,
@@ -162,6 +163,15 @@ def check(result: dict[str, Any]) -> list[str]:
     return failures
 
 
+def _verification(stats: dict[str, Any] | None) -> str:
+    if not stats:
+        return ''
+    return (
+        f', claims supported {stats["supported"]}/{stats["checked"]} '
+        f'({stats["rewritten"]} rewritten, {stats["removed"]} removed)'
+    )
+
+
 async def main() -> int:
     args = parse_args()
     if not args.full_budget:
@@ -190,6 +200,7 @@ async def main() -> int:
             'passed': not failures,
             'failures': failures,
             'warnings': warnings(result),
+            'verification': result['verification'],
             'steps': [
                 {
                     'objective': step.step.objective, 'source_types': step.step.sources, 'lens': step.step.lens,
@@ -205,7 +216,7 @@ async def main() -> int:
         status = 'PASS' if not failures else 'FAIL: ' + '; '.join(failures)
         print(
             f'    {status} | {result["seconds"]}s, {result["model_calls"]} model calls, '
-            f'{result["prompt_tokens"]}+{result["output_tokens"]} tokens',
+            f'{result["prompt_tokens"]}+{result["output_tokens"]} tokens{_verification(result["verification"])}',
             flush=True,
         )
 
