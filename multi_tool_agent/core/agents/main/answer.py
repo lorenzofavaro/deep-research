@@ -34,21 +34,28 @@ def build_registry(results: list[StepResult]) -> list[RegistryEntry]:
         results: Results of all the research steps
 
     Returns:
-        Sources (deduplicated by key) paired with their findings
+        Sources (deduplicated by key) paired with their findings (deduplicated by claim)
     """
     registry: dict[str, RegistryEntry] = {}
     for result in results:
         sources = {source.key: source for source in result.sources}
         for key, findings in result.findings.items():
             _, collected = registry.setdefault(key, (sources[key], []))
-            claims = {finding.claim for finding in collected}
-            collected.extend(
-                finding for finding in findings if finding.claim not in claims
-            )
+            by_claim = {
+                finding.claim: i for i,
+                finding in enumerate(collected)
+            }
+            for finding in findings:
+                if finding.claim not in by_claim:
+                    by_claim[finding.claim] = len(collected)
+                    collected.append(finding)
+                elif finding.section and not collected[by_claim[finding.claim]].section:
+                    # The same claim recorded for a section (e.g. after the scout found it) keeps the section
+                    collected[by_claim[finding.claim]] = finding
     return list(registry.values())
 
 
-def _describe(source: Source) -> str:
+def describe_source(source: Source) -> str:
     authors = ''
     if source.authors:
         authors = source.authors[0] + \
@@ -77,7 +84,7 @@ def answer_input(user_message: str, question: str, registry: list[RegistryEntry]
         '# Sources and findings',
     ]
     for number, (source, findings) in enumerate(registry, start=1):
-        lines.append(f'[{number}] {_describe(source)}')
+        lines.append(f'[{number}] {describe_source(source)}')
         for finding in findings:
             lines.append(f'  - {finding.claim}')
             lines.append(f'    Evidence: "{finding.evidence}"')
@@ -112,7 +119,7 @@ def format_references(answer: str, registry: list[RegistryEntry]) -> str:
         for number in group.split(',')
     }
     lines = [
-        f'[{number}] {_describe(registry[number - 1][0])}'
+        f'[{number}] {describe_source(registry[number - 1][0])}'
         for number in sorted(cited)
         if 1 <= number <= len(registry)
     ]

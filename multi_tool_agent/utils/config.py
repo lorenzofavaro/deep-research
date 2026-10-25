@@ -35,6 +35,9 @@ class Config:
         self.cited_candidates = _int_env('CITED_CANDIDATES', 15)
         self.openalex_api_key = os.getenv('OPENALEX_API_KEY', '')
 
+        # Answer format: chat (direct answer), report (sections written one by one) or auto (the classifier decides)
+        self.output_mode = os.getenv('OUTPUT_MODE', 'auto')
+
         # Web
         self.tavily_api_key = os.getenv('TAVILY_API_KEY', '')
         self.web_results = _int_env('WEB_RESULTS', 5)
