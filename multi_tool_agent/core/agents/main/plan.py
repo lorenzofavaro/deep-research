@@ -70,10 +70,35 @@ def _format_scout(scout: StepResult) -> str:
     return '\n'.join(lines)
 
 
-def plan_input(question: str, complexity: str, scout: Optional[StepResult] = None) -> str:
-    """Build the planner input: the question, its complexity and the scout's survey, if any."""
+def plan_input(
+    question: str, complexity: str, scout: Optional[StepResult] = None, variant: int = 1,
+    variants: int = 1,
+) -> str:
+    """
+    Build the planner input: the question, its complexity and the scout's survey, if any.
+
+    Args:
+        question: The research question
+        complexity: Its complexity
+        scout: The scout's result, if a scout ran
+        variant: Number of this plan, when several independent research runs are merged (ensemble)
+        variants: Number of independent runs
+
+    Returns:
+        The planner input
+    """
     text = f'Current date: {today()}\nResearch question: {question}\nComplexity: {complexity}'
-    return f'{text}\n\n{_format_scout(scout)}' if scout else text
+    if scout:
+        text += f'\n\n{_format_scout(scout)}'
+    if variants > 1:
+        text += (
+            f'\n\nThis is independent research run {variant} of {variants}, whose findings will be merged: '
+            + (
+                'plan the most direct approach.' if variant == 1 else
+                'choose different angles, sources and sub-questions than the most obvious plan would.'
+            )
+        )
+    return text
 
 
 def plan_agent() -> LlmAgent:

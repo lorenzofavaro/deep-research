@@ -31,6 +31,7 @@ ROLES = {
     'Report Section Writer': 'section',
     'Report Editor': 'frame',
     'Citation Verifier': 'verify',
+    'Report Refiner': 'refine',
 }
 
 PAPERS = [
@@ -383,7 +384,9 @@ def test_findings_are_tagged_with_sections_and_coverage_is_checked(script):
     calls = script(reflect=follow_up)
     _, state = run('How do SSMs compare to transformers?')
 
-    steps = {step['step']['objective']             : step for step in state['last_run']['steps']}
+    steps = {
+        step['step']['objective']: step for step in state['last_run']['steps']
+    }
     [paper_findings] = steps['Find core SSM papers']['findings'].values()
     assert [finding['section'] for finding in paper_findings] == ['s1']
     [reflect_input] = calls.inputs('reflect')
@@ -752,3 +755,88 @@ def test_failing_verification_keeps_the_answer(script):
 
     assert state['last_run']['answer'] == 'SSMs scale linearly [1]. Transformers dominate [2]. Invented.'
     assert state['last_run']['verification']['error']
+
+
+def test_refinement_is_off_by_default_and_used_when_enabled(script, monkeypatch):
+    calls = script(classify=REPORT, section=section_writer, frame=FRAME)
+    run('Write a report on SSMs vs transformers')
+    assert calls.count()['refine'] == 0
+
+    monkeypatch.setattr(config, 'refine', True)
+
+    def refiner(request):
+        report = request.contents[0].parts[0].text.split(
+            '<report>\n', 1,
+        )[1].split('\n</report>')[0]
+        # Echo the wrapper, as models sometimes do: it must be stripped
+        return {'report': '<report>' + report.replace('Open questions.', '| Model | Speed |\n| SSM | linear [1] |')}
+
+    calls = script(
+        classify=REPORT, section=section_writer,
+        frame=FRAME, refine=refiner,
+    )
+    _, state = run('Write a report on SSMs vs transformers')
+
+    [refine_input] = calls.inputs('refine')
+    assert 'Claim from Paper One' in refine_input
+    assert '| SSM | linear [1] |' in state['last_run']['answer']
+    assert state['last_run']['answer'].startswith('# SSMs vs Transformers')
+
+
+def test_refinement_that_drops_citations_is_discarded(script, monkeypatch):
+    monkeypatch.setattr(config, 'refine', True)
+    script(
+        classify=REPORT, section=section_writer, frame=FRAME,
+        refine={'report': '# Short\n\nNo citations left.'},
+    )
+    _, state = run('Write a report on SSMs vs transformers')
+
+    assert state['last_run']['answer'].startswith('# SSMs vs Transformers')
+
+
+def test_ensemble_runs_independent_research_and_merges_the_findings(script, monkeypatch):
+    monkeypatch.setattr(config, 'ensemble_runs', 2)
+
+    def planner(request):
+        # The second run explores another angle
+        if 'run 2 of 2' in request.contents[0].parts[0].text:
+            return {**PLAN, 'tasks': [{'objective': 'Find critiques', 'sources': ['web'], 'lens': 'critic'}]}
+        return PLAN
+
+    calls = script(plan=planner)
+    events, state = run('How do SSMs compare to transformers?')
+
+    plan_inputs = calls.inputs('plan')
+    assert len(plan_inputs) == 2 and all(
+        '# Scout survey' in text for text in plan_inputs
+    )
+    assert any('choose different angles' in text for text in plan_inputs)
+    # One scout, then 2 + 1 researchers
+    assert calls.count()['research'] == 16
+    objectives = {
+        step['step']['objective']
+        for step in state['last_run']['steps']
+    }
+    assert {
+        'Find core SSM papers', 'Find recent coverage',
+        'Find critiques',
+    } <= objectives
+    assert any(text.startswith('[run 2/2]') for author, text in events)
+    assert calls.count()['answer'] == 1
+
+
+def test_a_failing_ensemble_run_does_not_break_the_answer(script, monkeypatch):
+    monkeypatch.setattr(config, 'ensemble_runs', 2)
+
+    def planner(request):
+        if 'run 2 of 2' in request.contents[0].parts[0].text:
+            raise RuntimeError('model crashed')
+        return PLAN
+
+    calls = script(plan=planner)
+    _, state = run('How do SSMs compare to transformers?')
+
+    assert calls.count()['answer'] == 1
+    assert {'Find core SSM papers', 'Find recent coverage'} <= {
+        s['step']['objective'] for s in state['last_run']['steps']
+    }
