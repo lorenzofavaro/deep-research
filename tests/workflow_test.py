@@ -1,6 +1,7 @@
 """End-to-end tests of the research workflow with a scripted model and stubbed search tools: no API calls."""
 import asyncio
 import json
+import re
 from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -48,17 +49,33 @@ PAGES = [
 ]
 
 PLAN = {
-    'tasks': [
+    'outline': [
         {
-            'objective': 'Find core SSM papers',
-            'sources': ['papers'], 'lens': 'evidence',
+            'id': 's1', 'title': 'How SSMs work',
+            'questions': ['What makes SSMs efficient?'],
         },
         {
-            'objective': 'Find recent coverage',
-            'sources': ['web'], 'lens': 'horizon',
+            'id': 's2', 'title': 'Current landscape', 'questions': [
+                'Which architectures dominate today?',
+            ],
+        },
+    ],
+    'quality_constraints': ['Cites primary sources'],
+    'tasks': [
+        {
+            'objective': 'Find core SSM papers', 'sources': [
+                'papers',
+            ], 'lens': 'evidence', 'section_ids': ['s1'],
+        },
+        {
+            'objective': 'Find recent coverage', 'sources': [
+                'web',
+            ], 'lens': 'horizon', 'section_ids': ['s2'],
         },
     ],
 }
+WEB_ONLY_PLAN = {**PLAN, 'tasks': [PLAN['tasks'][1]]}
+SCOUT = 'Survey the landscape'
 
 
 def function_responses(request: LlmRequest) -> list[dict]:
@@ -75,6 +92,21 @@ def tool_names(request: LlmRequest) -> set[str]:
     }
 
 
+def objective_of(request: LlmRequest) -> str:
+    return request.contents[0].parts[0].text.split('Your objective: ')[1].split('\n')[0]
+
+
+def sections_of(request: LlmRequest) -> list[str]:
+    """The section ids listed in a researcher's instruction."""
+    instruction = str(request.config.system_instruction)
+    if 'Report sections you gather evidence for' not in instruction:
+        return []
+    block = instruction.split('Report sections you gather evidence for', 1)[
+        1
+    ].split('**Tools**')[0]
+    return re.findall(r'`(s\d+)`', block)
+
+
 def call(name: str, **args: Any) -> types.FunctionCall:
     return types.FunctionCall(name=name, args=args)
 
@@ -88,7 +120,7 @@ def read_source_id(request: LlmRequest) -> str:
 
 
 def researcher(request: LlmRequest) -> Any:
-    """Search, read the first result, record a finding quoting it, then write the brief."""
+    """Search, read the first result, record a finding quoting it (for its first section), then write the brief."""
     responses = function_responses(request)
     tools = tool_names(request)
     if not responses:
@@ -105,6 +137,7 @@ def researcher(request: LlmRequest) -> Any:
         )
         return call(
             'record_finding', source_id=read_source_id(request), claim=f'Claim from {last["title"]}', evidence=quote,
+            section_id=(sections_of(request) or [''])[0],
         )
     return 'Brief: done.'
 
@@ -119,6 +152,7 @@ DEFAULT_RESPONSES: dict[str, Any] = {
     'reflect': {'sufficient': True, 'missing': '', 'follow_up_tasks': []},
     'answer': 'SSMs scale linearly [1]. Transformers dominate [2]. Invented [9].',
 }
+SIMPLE = {**DEFAULT_RESPONSES['classify'], 'complexity': 'simple'}
 
 
 class Script:
@@ -235,53 +269,133 @@ def test_research_run_produces_answer_with_valid_references(script):
     calls = script()
     events, state = run('How do SSMs compare to transformers?')
 
-    # Each researcher: search, read, record, brief
-    assert calls.count() == Counter(classify=1, plan=1, research=8, reflect=1, answer=1)
+    # The scout and each researcher: search, read, record, brief
+    assert calls.count() == Counter(
+        classify=1, plan=1,
+        research=12, reflect=1, answer=1,
+    )
     text = references(events)
     assert '[1]' in text and '[2]' in text and '[9]' not in text
-    assert 'Ada Lovelace, "Paper One"' in text and '"Page One"' in text
+    assert 'Ada Lovelace, "Paper One"' in text
     assert state['conversation'][-1] == {
         'role': 'assistant',
         'text': DEFAULT_RESPONSES['answer'],
     }
+    steps = state['last_run']['steps']
     assert [
-        step['brief'] for step in state['last_run']
-        ['steps']
-    ] == ['Brief: done.', 'Brief: done.']
+        step['step']['lens']
+        for step in steps
+    ] == ['scout', 'evidence', 'horizon']
+    assert all(step['brief'] == 'Brief: done.' for step in steps)
 
 
-def test_researchers_get_their_own_task_and_tools(script):
+def test_scout_surveys_before_planning(script):
     calls = script()
     run('How do SSMs compare to transformers?')
 
-    first_calls = [
-        request for request in calls.requests(
+    roles = [role for role, _ in calls.calls]
+    assert roles.index('plan') > max(
+        i for i, role in enumerate(roles) if role == 'research' and
+        SCOUT in objective_of(calls.calls[i][1])
+    )
+    [plan_input] = calls.inputs('plan')
+    assert '# Scout survey' in plan_input and 'Brief: done.' in plan_input and 'Claim from Paper One' in plan_input
+    scout_requests = [
+        r for r in calls.requests(
             'research',
-        ) if not function_responses(request)
+        ) if SCOUT in objective_of(r)
     ]
-    by_objective = {
-        request.contents[0].parts[0].text.split('Your objective: ')[
-            1
-        ].split('\n')[0]: request
-        for request in first_calls
+    assert tool_names(scout_requests[0]) == {
+        'search_papers', 'web_search', 'read_source', 'record_finding', 'think',
     }
-    assert set(by_objective) == {
-        'Find core SSM papers', 'Find recent coverage',
+
+
+def test_simple_questions_skip_the_scout(script):
+    calls = script(classify=SIMPLE)
+    run('Who won the 2026 Nobel Prize in Physics?')
+
+    assert not any(
+        SCOUT in objective_of(r)
+        for r in calls.requests('research')
+    )
+    assert '# Scout survey' not in calls.inputs('plan')[0]
+
+
+def test_researchers_get_their_own_task_sections_and_tools(script):
+    calls = script()
+    run('How do SSMs compare to transformers?')
+
+    first_calls = {
+        objective_of(request): request for request in calls.requests('research')
+        if not function_responses(request) and SCOUT not in objective_of(request)
     }
+    assert set(first_calls) == {'Find core SSM papers', 'Find recent coverage'}
     common = {'read_source', 'record_finding', 'think'}
-    assert tool_names(by_objective['Find core SSM papers']) == {
+    assert tool_names(first_calls['Find core SSM papers']) == {
         'search_papers', *common,
     }
-    assert tool_names(by_objective['Find recent coverage']) == {
+    assert tool_names(first_calls['Find recent coverage']) == {
         'web_search', *common,
     }
-    # A researcher never sees the other researcher's tool calls
+    assert sections_of(first_calls['Find core SSM papers']) == ['s1']
+    assert sections_of(first_calls['Find recent coverage']) == ['s2']
+    # A researcher never sees another researcher's tool calls
     for request in calls.requests('research'):
-        seen = json.dumps(function_responses(request))
-        assert not ('Paper One' in seen and 'Page One' in seen)
+        if SCOUT not in objective_of(request):
+            seen = json.dumps(function_responses(request))
+            assert not ('Paper One' in seen and 'Page One' in seen)
     [answer_input] = calls.inputs('answer')
     assert 'Claim from Paper One' in answer_input and 'Claim from Page One' in answer_input
     assert 'scale linearly with the sequence length' in answer_input
+
+
+def test_findings_are_tagged_with_sections_and_coverage_is_checked(script):
+    follow_up = {'sufficient': False, 'missing': 'x', 'follow_up_tasks': []}
+    calls = script(reflect=follow_up)
+    _, state = run('How do SSMs compare to transformers?')
+
+    steps = {step['step']['objective']: step for step in state['last_run']['steps']}
+    [paper_findings] = steps['Find core SSM papers']['findings'].values()
+    assert [finding['section'] for finding in paper_findings] == ['s1']
+    [reflect_input] = calls.inputs('reflect')
+    assert '`s1` How SSMs work: 1 findings' in reflect_input
+    assert '`s2` Current landscape: 1 findings' in reflect_input
+    assert 'Cites primary sources' in reflect_input
+
+
+def test_unknown_sections_are_rejected(script):
+    def wrong_section(request):
+        response = researcher(request)
+        if isinstance(response, types.FunctionCall) and response.name == 'record_finding' and sections_of(request):
+            return call('record_finding', **{**response.args, 'section_id': 's9'})
+        return response
+
+    calls = script(
+        classify=SIMPLE, plan=WEB_ONLY_PLAN,
+        research=wrong_section, answer='None.',
+    )
+    _, state = run('How do SSMs compare to transformers?')
+
+    assert not state['last_run']['steps'][0]['findings']
+    errors = [
+        r['error'] for request in calls.requests(
+            'research',
+        ) for r in function_responses(request) if 'error' in r
+    ]
+    assert errors and 'Unknown section_id' in errors[0]
+
+
+def test_reflection_can_revise_the_outline(script):
+    revised = [{'id': 's1', 'title': 'Mechanics', 'questions': ['How?']}]
+    script(
+        reflect={
+            'sufficient': True,
+            'missing': '', 'revised_outline': revised,
+        },
+    )
+    _, state = run('How do SSMs compare to transformers?')
+
+    assert state['last_run']['plan']['outline'] == revised
 
 
 def test_findings_need_verbatim_evidence(script):
@@ -318,7 +432,7 @@ def test_search_budget_is_enforced(script, monkeypatch):
         return 'Brief: out of budget.'
 
     script(
-        plan={'tasks': [PLAN['tasks'][1]]},
+        classify=SIMPLE, plan=WEB_ONLY_PLAN,
         research=endless_searcher, answer='Nothing.',
     )
     _, state = run('How do SSMs compare to transformers?')
@@ -342,7 +456,7 @@ def test_budget_holds_for_parallel_tool_calls(script, monkeypatch):
         return 'Brief.'
 
     script(
-        plan={'tasks': [PLAN['tasks'][1]]},
+        classify=SIMPLE, plan=WEB_ONLY_PLAN,
         research=parallel_searcher, answer='None.',
     )
     run('How do SSMs compare to transformers?')
@@ -361,11 +475,9 @@ def test_simple_questions_get_a_smaller_budget(script, monkeypatch):
     def endless_searcher(request):
         return call('web_search', query='q') if 'web_search' in tool_names(request) else 'Brief.'
 
-    classify = {**DEFAULT_RESPONSES['classify'], 'complexity': 'simple'}
     script(
-        classify=classify, plan={
-            'tasks': [PLAN['tasks'][1]],
-        }, research=endless_searcher, answer='None.',
+        classify=SIMPLE, plan=WEB_ONLY_PLAN,
+        research=endless_searcher, answer='None.',
     )
     run('Who won the 2026 Nobel Prize in Physics?')
 
@@ -386,7 +498,7 @@ def test_non_research_message_gets_a_reply_without_research(script):
 
 
 def test_follow_up_turn_sees_previous_conversation(script):
-    calls = script()
+    calls = script(classify=SIMPLE)
     run('How do SSMs compare to transformers?', 'And what about memory usage?')
 
     second_classify_input = calls.inputs('classify')[1]
@@ -414,7 +526,7 @@ def test_reflection_runs_new_follow_up_tasks_only(script):
     # Round 2 runs one researcher; no reflection after the last round
     assert calls.count() == Counter(
         classify=1, plan=1,
-        research=12, reflect=1, answer=1,
+        research=16, reflect=1, answer=1,
     )
     rounds = [
         text for author, text in events if author ==
@@ -429,12 +541,12 @@ def test_reflection_runs_new_follow_up_tasks_only(script):
 def test_plan_is_capped_to_max_steps(script, monkeypatch):
     monkeypatch.setattr(config, 'max_steps', 1)
     plan = {
-        'tasks': [{
+        **PLAN, 'tasks': [{
             'objective': f'objective {i}',
             'sources': ['web'],
         } for i in range(4)],
     }
-    calls = script(plan=plan)
+    calls = script(classify=SIMPLE, plan=plan)
     run('How do SSMs compare to transformers?')
 
     assert calls.count()['research'] == 4
@@ -445,7 +557,7 @@ def test_failing_tools_are_reported_to_the_researcher(script, monkeypatch):
         raise RuntimeError('arXiv is down')
     monkeypatch.setattr(papers, 'search_papers', broken_search)
 
-    calls = script(answer='Only the web survived [1].')
+    calls = script(classify=SIMPLE, answer='Only the web survived [1].')
     events, state = run('How do SSMs compare to transformers?')
 
     papers_step, web_step = state['last_run']['steps']
@@ -467,7 +579,7 @@ def test_failing_researcher_keeps_its_findings(script):
         return researcher(request)
 
     script(
-        plan={'tasks': [PLAN['tasks'][1]]},
+        classify=SIMPLE, plan=WEB_ONLY_PLAN,
         research=crashing_researcher, answer='Kept [1].',
     )
     events, state = run('How do SSMs compare to transformers?')
